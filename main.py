@@ -50,31 +50,37 @@ conn, cursor = conectar()
 
 if "autenticado" not in st.session_state: st.session_state.autenticado = False
 
+# --- 2. TELA DE ACESSO (CORRIGIDA) ---
 if not st.session_state.autenticado:
     st.markdown("<h1 style='text-align: center;'>🏁 CheckPoint Shift</h1>", unsafe_allow_html=True)
     aba_login, aba_cad = st.tabs(["🔑 ACESSAR", "📝 CRIAR CONTA"])
+    
     with aba_login:
-        u = st.text_input("Usuário").lower().strip()
-        s = st.text_input("Senha", type="password")
+        u = st.text_input("Usuário", key="login_user").lower().strip()
+        s = st.text_input("Senha", type="password", key="login_pass")
         if st.button("ENTRAR NO PAINEL"):
             if cursor.execute("SELECT * FROM usuarios WHERE usuario=? AND senha=?", (u, s)).fetchone():
                 st.session_state.autenticado, st.session_state.user = True, u
                 st.rerun()
             else: st.error("Usuário ou senha incorretos.")
+            
     with aba_cad:
-        nu = st.text_input("Novo Usuário").lower().strip()
-        ns = st.text_input("Senha", type="password")
-        if st.button("CADASTRAR"):
-            try:
-                cursor.execute("INSERT INTO usuarios (usuario, senha) VALUES (?,?)", (nu, ns))
-                conn.commit(); st.success("✅ Conta criada!")
-            except: st.error("❌ Usuário já existe.")
+        nu = st.text_input("Definir Novo Usuário", key="cad_user").lower().strip()
+        ns = st.text_input("Definir Senha", type="password", key="cad_pass")
+        if st.button("CADASTRAR CONTA"):
+            if nu and ns:
+                try:
+                    cursor.execute("INSERT INTO usuarios (usuario, senha) VALUES (?,?)", (nu, ns))
+                    conn.commit()
+                    st.success("✅ Conta criada com sucesso! Vá para a aba ACESSAR.")
+                except: st.error("❌ Este usuário já existe.")
+            else: st.warning("Preencha todos os campos.")
     st.stop()
 
 user = st.session_state.user
 hoje = date.today()
 
-# --- 3. VEÍCULO (SISTEMA DE KM ATUALIZADO) ---
+# --- 3. VEÍCULO ---
 v_data = cursor.execute("SELECT * FROM veiculo WHERE usuario=?", (user,)).fetchone()
 if "editando_veiculo" not in st.session_state: st.session_state.editando_veiculo = False
 
@@ -82,7 +88,7 @@ if v_data is None or st.session_state.editando_veiculo:
     st.header("⚙️ Configuração do Veículo")
     with st.form("cfg_carro"):
         fipe_val = st.number_input("Valor FIPE do Carro", value=45000.0)
-        km_atual_input = st.number_input("KM Atual do Carro (O que marca no painel)", value=100000.0)
+        km_atual_input = st.number_input("KM Atual do Painel", value=100000.0)
         prox_troca = st.number_input("KM da Próxima Troca de Óleo", value=km_atual_input + 10000)
         if st.form_submit_button("SALVAR CONFIGURAÇÃO"):
             cursor.execute("INSERT OR REPLACE INTO veiculo VALUES (?,?,?,?,?,?)", 
@@ -104,8 +110,8 @@ with tab_resumo:
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("💰 Fundo IPVA")
-        st.metric("Falta Guardar", f"R$ {total_ipva - guardado_ipva:.2f}", f"Total: R$ {total_ipva:.2f}")
-        val_ipva = st.number_input("Valor Operação IPVA (R$):", value=0.0)
+        st.metric("Falta Guardar", f"R$ {total_ipva - guardado_ipva:.2f}", f"Total IPVA: R$ {total_ipva:.2f}")
+        val_ipva = st.number_input("Valor Operação IPVA (R$):", value=0.0, key="op_ipva")
         ca, cb = st.columns(2)
         if ca.button("📥 DEPOSITAR"):
             cursor.execute("UPDATE veiculo SET guardado_ipva = guardado_ipva + ? WHERE usuario=?", (val_ipva, user))
@@ -124,25 +130,23 @@ with tab_resumo:
         st.progress(progresso_km)
         
         if km_restante <= 500:
-            st.error(f"⚠️ ATENÇÃO: Troca de óleo em {km_restante:.1f} km!")
+            st.error(f"⚠️ TROCAR ÓLEO URGENTE! Faltam {km_restante:.1f} km")
         else:
             st.info(f"Faltam {km_restante:.1f} km para a revisão.")
 
 with tab_ganhos:
-    meta_diaria = st.number_input("Sua Meta Diária (R$):", value=400.0)
+    meta_diaria = st.number_input("Sua Meta Diária (R$):", value=400.0, key="meta_val")
     
     with st.form("ganho_diario", clear_on_submit=True):
         st.subheader("Registrar Trabalho")
         g1, g2, g3 = st.columns(3)
         v_bruto = g1.number_input("Ganhos Brutos (R$)")
         v_gastos = g2.number_input("Total Gastos (R$)")
-        v_km_rodada = g3.number_input("KM Rodada Hoje") # Este valor vai somar no total do carro
+        v_km_rodada = g3.number_input("KM Rodada Hoje")
         
         if st.form_submit_button("💾 SALVAR DIA E ATUALIZAR KM"):
-            # 1. Salva o ganho no histórico
             cursor.execute("INSERT INTO ganhos (usuario, data, ganho, gasto, km, h_ini, h_fim) VALUES (?,?,?,?,?,?,?)", 
                            (user, str(hoje), v_bruto, v_gastos, v_km_rodada, "00:00", "00:00"))
-            # 2. Atualiza a quilometragem do veículo no banco de dados
             cursor.execute("UPDATE veiculo SET km_ini = km_ini + ? WHERE usuario=?", (v_km_rodada, user))
             conn.commit(); st.rerun()
 
@@ -153,10 +157,10 @@ with tab_ganhos:
         meta_total = len(df_h) * meta_diaria
         if lucro_total >= meta_total:
             excedente = lucro_total - meta_total
-            st.markdown(f'<div class="card-meta meta-sucesso"><h1>META ATINGIDA! 🎯</h1><p style="font-size: 50px; font-weight: bold;">R$ {lucro_total:.2f}</p><p>🚀 Parabéns! Saldo extra de <b>R$ {excedente:.2f}</b>!</p></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="card-meta meta-sucesso"><h1>META ACUMULADA ATINGIDA! 🎯</h1><p style="font-size: 50px; font-weight: bold;">R$ {lucro_total:.2f}</p><p>🚀 Parabéns! Você está com <b>R$ {excedente:.2f}</b> acima da meta total!</p></div>', unsafe_allow_html=True)
         else:
             deficit = meta_total - lucro_total
-            st.markdown(f'<div class="card-meta meta-falta"><h1>DÉFICIT ACUMULADO ⚠️</h1><p style="font-size: 50px; font-weight: bold;">R$ {lucro_total:.2f}</p><p>Faltam <b>R$ {deficit:.2f}</b> para bater o objetivo acumulado.</p></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="card-meta meta-falta"><h1>DÉFICIT ACUMULADO ⚠️</h1><p style="font-size: 50px; font-weight: bold;">R$ {lucro_total:.2f}</p><p>Você está em déficit de <b>R$ {deficit:.2f}</b> em relação à meta total.</p></div>', unsafe_allow_html=True)
 
     st.subheader("📜 Histórico")
     df_show = df_h.sort_values(by='id', ascending=False)
@@ -167,7 +171,6 @@ with tab_ganhos:
             cor = "#00FF7F" if l_item >= meta_diaria else "#FF4B4B"
             c_txt.markdown(f"📅 {r['data']} | Lucro: <b style='color:{cor}'>R$ {l_item:.2f}</b> | Rodou: {r['km']} km", unsafe_allow_html=True)
             if c_del.button("🗑️", key=f"del_g_{r['id']}"):
-                # Ao deletar um registro, subtraímos a KM do total do carro também para manter o sincronismo
                 cursor.execute("UPDATE veiculo SET km_ini = km_ini - ? WHERE usuario=?", (r['km'], user))
                 cursor.execute("DELETE FROM ganhos WHERE id=?", (r['id'],))
                 conn.commit(); st.rerun()
@@ -176,7 +179,7 @@ with tab_caixinhas:
     st.subheader("🎯 Suas Caixinhas")
     with st.expander("➕ NOVA META"):
         with st.form("meta_form"):
-            it = st.text_input("Objetivo"); v = st.number_input("Valor")
+            it = st.text_input("Objetivo"); v = st.number_input("Valor Total")
             if st.form_submit_button("CRIAR"):
                 cursor.execute("INSERT INTO metas (usuario, item, valor, data, guardado) VALUES (?,?,?,?,?)", (user, it, v, str(hoje), 0.0))
                 conn.commit(); st.rerun()
@@ -188,11 +191,11 @@ with tab_caixinhas:
             st.progress(min((m['guardado'] or 0)/m['valor'], 1.0) if m['valor'] > 0 else 0)
             v_m = st.number_input("Valor p/ Operação:", key=f"v_{m['id']}", value=0.0)
             c1, c2, c3 = st.columns(3)
-            if c1.button("📥", key=f"in_{m['id']}"):
+            if c1.button("📥 Guardar", key=f"in_{m['id']}"):
                 cursor.execute("UPDATE metas SET guardado = guardado + ? WHERE id=?", (v_m, m['id'])); conn.commit(); st.rerun()
-            if c2.button("📤", key=f"out_{m['id']}"):
+            if c2.button("📤 Retirar", key=f"out_{m['id']}"):
                 cursor.execute("UPDATE metas SET guardado = guardado - ? WHERE id=?", (v_m, m['id'])); conn.commit(); st.rerun()
-            if c3.button("🗑️", key=f"del_m_{m['id']}"):
+            if c3.button("🗑️ Excluir", key=f"del_m_{m['id']}"):
                 cursor.execute("DELETE FROM metas WHERE id=?", (m['id'],)); conn.commit(); st.rerun()
 
 # --- SIDEBAR ---
