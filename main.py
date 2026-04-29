@@ -1,124 +1,130 @@
 import streamlit as st
+import sqlite3
 import pandas as pd
-import os
-import hashlib
-from datetime import date
+from datetime import date, datetime, timedelta
 
-# --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Driver Pro Mateus", layout="centered")
+# --- 1. CONFIGURAÇÃO ---
+st.set_page_config(page_title="Driver Pro Mateus", layout="wide")
 
-# Variável global para evitar o NameError
-HOJE_ATUAL = date.today()
+def conectar():
+    conn = sqlite3.connect("driver_mateus_v12.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("CREATE TABLE IF NOT EXISTS usuarios (usuario TEXT PRIMARY KEY, senha TEXT)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS veiculo (usuario TEXT PRIMARY KEY, km_ini REAL, km_alvo REAL, custo REAL, fipe REAL, guardado_ipva REAL)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS metas (id INTEGER PRIMARY KEY, usuario TEXT, item TEXT, valor REAL, data TEXT, guardado REAL)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS ganhos (usuario TEXT, data TEXT, ganho REAL, gasto REAL, km REAL, h_ini TEXT, h_fim TEXT)")
+    conn.commit()
+    return conn, cursor
 
-# --- FUNÇÃO DE CRIPTOGRAFIA SIMPLES ---
-def hash_senha(senha):
-    return hashlib.sha256(str.encode(senha)).hexdigest()
+conn, cursor = conectar()
 
-# --- BANCO DE DADOS (CSV) ---
-user_id = st.session_state.get("usuario_atual", "default").lower()
-arq_usuarios = "usuarios_v2.csv" # Versão nova para resetar erros
-arq_dados = f"dados_{user_id}.csv"
-arq_carro = f"carro_{user_id}.csv"
-arq_sonhos = f"sonhos_{user_id}.csv"
-arq_dep_sonhos = f"dep_sonhos_{user_id}.csv"
+# --- 2. LOGIN E CADASTRO ---
+if "autenticado" not in st.session_state: st.session_state.autenticado = False
 
-def carregar_safe(arquivo, colunas):
-    if not os.path.exists(arquivo):
-        df = pd.DataFrame(columns=colunas)
-        df.to_csv(arquivo, index=False)
-        return df
-    df = pd.read_csv(arquivo)
-    for col in colunas:
-        if col not in df.columns: df[col] = 0.0
-    return df
-
-# --- TELA DE ACESSO (LOGIN E CADASTRO REAL) ---
-if "logado" not in st.session_state: st.session_state.logado = False
-
-if not st.session_state.logado:
+if not st.session_state.autenticado:
     st.title("🚖 Driver Pro - Acesso")
-    tab1, tab2 = st.tabs(["Entrar", "Criar Conta"])
-    
-    if not os.path.exists(arq_usuarios):
-        pd.DataFrame(columns=["usuario", "senha"]).to_csv(arq_usuarios, index=False)
-    
-    df_u = pd.read_csv(arq_usuarios, dtype=str)
-
-    with tab1:
+    aba_login, aba_cad = st.tabs(["🔑 Entrar", "📝 Criar Conta"])
+    with aba_login:
         u = st.text_input("Usuário").lower().strip()
         s = st.text_input("Senha", type="password")
-        if st.button("Login"):
-            s_hash = hash_senha(s)
-            if any((df_u['usuario'] == u) & (df_u['senha'] == s_hash)):
-                st.session_state.logado = True
-                st.session_state.usuario_atual = u
+        if st.button("Acessar Aplicativo"):
+            if cursor.execute("SELECT * FROM usuarios WHERE usuario=? AND senha=?", (u, s)).fetchone():
+                st.session_state.autenticado, st.session_state.user = True, u
                 st.rerun()
-            else: st.error("Incorreto!")
-
-    with tab2:
+            else: st.error("Usuário ou senha inválidos.")
+    with aba_cad:
         nu = st.text_input("Novo Usuário").lower().strip()
         ns = st.text_input("Nova Senha", type="password")
-        if st.button("Cadastrar"):
-            if nu and ns:
-                if nu in df_u['usuario'].values: st.error("Já existe!")
-                else:
-                    nova_u = pd.DataFrame([{"usuario": nu, "senha": hash_senha(ns)}])
-                    pd.concat([df_u, nova_u]).to_csv(arq_usuarios, index=False)
-                    st.success("Cadastrado! Vá em 'Entrar'.")
+        if st.button("Finalizar Cadastro"):
+            try:
+                cursor.execute("INSERT INTO usuarios VALUES (?,?)", (nu, ns))
+                conn.commit(); st.success("Conta criada!")
+            except: st.error("Usuário já existe.")
     st.stop()
 
-# --- APP PRINCIPAL ---
-st.title(f"Painel: {st.session_state.usuario_atual.upper()}")
+user = st.session_state.user
+hoje = date.today()
 
-# 1. IPVA
-st.header("⚙️ Veículo e IPVA")
-df_c = carregar_safe(arq_carro, ["Fipe", "KM_Atual", "KM_Oleo", "Ja_Guardado"])
-if df_c.empty:
-    with st.form("car"):
-        f = st.number_input("Valor Fipe", 40000.0)
+# --- 3. CONFIGURAÇÃO DO VEÍCULO ---
+v_data = cursor.execute("SELECT * FROM veiculo WHERE usuario=?", (user,)).fetchone()
+if v_data is None:
+    st.header(f"Bem-vindo, {user.capitalize()}! Configure seu carro:")
+    with st.form("cfg"):
+        f1 = st.number_input("Valor FIPE", value=40000.0)
+        f2 = st.number_input("KM Atual", value=100000.0)
         if st.form_submit_button("Salvar"):
-            pd.DataFrame([{"Fipe":f, "KM_Atual":100000, "KM_Oleo":110000, "Ja_Guardado":0.0}]).to_csv(arq_carro, index=False)
-            st.rerun()
-else:
-    c = df_c.iloc[0]
-    total_i = c['Fipe'] * 0.04
-    col1, col2 = st.columns(2)
-    guardado = col1.number_input("Já guardado:", value=float(c['Ja_Guardado']))
-    if col2.button("Salvar Fundo"):
-        df_c.at[0, 'Ja_Guardado'] = guardado
-        df_c.to_csv(arq_carro, index=False)
-        st.rerun()
-    st.info(f"Falta R$ {total_i - guardado:.2f} para o IPVA.")
+            cursor.execute("INSERT INTO veiculo VALUES (?,?,?,?,?,?)", (user, f2, f2+10000, 350.0, f1, 0.0))
+            conn.commit(); st.rerun()
+    st.stop()
 
-# 2. GANHOS
-st.header("💰 Ganhos")
-df_d = carregar_safe(arq_dados, ["Data", "Ganho", "Gasto"])
-with st.form("ganhos"):
-    g_h = st.number_input("Ganho de hoje")
-    gas_h = st.number_input("Gasto de hoje")
-    if st.form_submit_button("Salvar Ganho"):
-        nova = pd.DataFrame([{"Data": HOJE_ATUAL.strftime("%d/%m"), "Ganho": g_h, "Gasto": gas_h}])
-        pd.concat([df_d, nova]).to_csv(arq_dados, index=False)
-        st.rerun()
+# --- 4. PAINEL PRINCIPAL ---
+st.title(f"Painel do {user.upper()} 🏁")
+tab_resumo, tab_ganhos, tab_metas = st.tabs(["📊 Resumo e IPVA", "💰 Ganhos e Histórico", "🎯 Caixinhas"])
 
-# 3. CAIXINHAS
-st.header("🎯 Caixinhas")
-df_s = carregar_safe(arq_sonhos, ["Item", "Valor_Meta"])
-df_dep = carregar_safe(arq_dep_sonhos, ["Item", "Data", "Valor_Depositado"])
+with tab_resumo:
+    # Lógica IPVA Detalhada
+    fipe, guardado_ipva = v_data[4], v_data[5]
+    total_ipva = fipe * 0.04
+    meses_jan = max(1, (13 - hoje.month))
+    falta_ipva = total_ipva - guardado_ipva
+    
+    st.subheader("📌 Planejamento IPVA")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total IPVA", f"R$ {total_ipva:.2f}")
+    c2.metric("Já Guardado", f"R$ {guardado_ipva:.2f}")
+    c3.metric("Falta Guardar", f"R$ {falta_ipva:.2f}")
+    
+    st.info(f"💡 Mateus, de hoje até Janeiro faltam {meses_jan} meses. A conta é: (R$ {total_ipva:.2f} - R$ {guardado_ipva:.2f}) / {meses_jan} meses. **Guarde R$ {falta_ipva/meses_jan:.2f} por mês.**")
+    
+    new_ipva = st.number_input("Adicionar valor ao fundo IPVA:", value=0.0)
+    if st.button("Atualizar Fundo"):
+        cursor.execute("UPDATE veiculo SET guardado_ipva = guardado_ipva + ? WHERE usuario=?", (new_ipva, user))
+        conn.commit(); st.rerun()
 
-with st.expander("Nova Meta"):
-    with st.form("meta"):
-        it = st.text_input("Objetivo")
-        vm = st.number_input("Meta R$")
-        if st.form_submit_button("Criar"):
-            pd.concat([df_s, pd.DataFrame([{"Item":it, "Valor_Meta":vm}])]).to_csv(arq_sonhos, index=False)
-            st.rerun()
+with tab_ganhos:
+    # Lançamento
+    with st.form("g", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        h_i = col1.text_input("Início", "08:00")
+        h_f = col2.text_input("Fim", "18:00")
+        g, gst, k = st.columns(3)
+        v_g = g.number_input("Ganho Bruto", value=None, placeholder="0.00")
+        v_gst = gst.number_input("Gasto", value=None, placeholder="0.00")
+        v_k = k.number_input("KM Rodado", value=None, placeholder="0")
+        if st.form_submit_button("Gravar Jornada"):
+            cursor.execute("INSERT INTO ganhos VALUES (?,?,?,?,?,?,?)", (user, str(hoje), v_g, v_gst, v_k, h_i, h_f))
+            conn.commit(); st.success("Gravado!"); st.rerun()
 
-for i, s in df_s.iterrows():
-    ja_tem = df_dep[df_dep['Item'] == s['Item']]['Valor_Depositado'].sum()
-    st.write(f"🚀 **{s['Item']}**: R$ {ja_tem} / R$ {s['Valor_Meta']}")
-    v_add = st.number_input("Guardar quanto?", key=f"s_{i}")
-    if st.button("Depositar", key=f"b_{i}"):
-        n_dep = pd.DataFrame([{"Item": s['Item'], "Data": str(HOJE_ATUAL), "Valor_Depositado": v_add}])
-        pd.concat([df_dep, n_dep]).to_csv(arq_dep_sonhos, index=False)
-        st.rerun()
+    # Histórico
+    st.subheader("📜 Histórico Recente")
+    df_g = pd.read_sql_query(f"SELECT * FROM ganhos WHERE usuario='{user}' ORDER BY data DESC", conn)
+    if not df_g.empty:
+        for i, row in df_g.iterrows():
+            with st.container(border=True):
+                c1, c2, c3 = st.columns([1, 2, 1])
+                c1.write(f"📅 {row['data']}")
+                c2.write(f"💰 Lucro: **R$ {row['ganho']-row['gasto']:.2f}** (Bruto: {row['ganho']} | Gasto: {row['gasto']})")
+                c3.write(f"⏰ {row['h_ini']} - {row['h_fim']}")
+
+with tab_metas:
+    st.subheader("🎯 Objetivos (Caixinhas)")
+    with st.expander("➕ Nova Meta"):
+        with st.form("m"):
+            it = st.text_input("Sonho"); v = st.number_input("Valor"); d = st.date_input("Data")
+            if st.form_submit_button("Criar"):
+                cursor.execute("INSERT INTO metas (usuario, item, valor, data, guardado) VALUES (?,?,?,?,?)", (user, it, v, str(d), 0.0))
+                conn.commit(); st.rerun()
+
+    metas = pd.read_sql_query(f"SELECT * FROM metas WHERE usuario='{user}'", conn)
+    for i, m in metas.iterrows():
+        with st.container(border=True):
+            ja = m['guardado'] or 0.0
+            progresso = min(ja / m['valor'], 1.0) if m['valor'] > 0 else 0
+            st.write(f"### 🚀 {m['item']}")
+            st.progress(progresso)
+            st.write(f"Já guardou R$ {ja:.2f} de R$ {m['valor']:.2f}")
+            
+            v_dep = st.number_input(f"Quanto guardar para {m['item']} hoje?", key=f"dep_{i}")
+            if st.button("Depositar", key=f"btn_{i}"):
+                cursor.execute("UPDATE metas SET guardado = guardado + ? WHERE id=?", (v_dep, m['id']))
+                conn.commit(); st.rerun()
