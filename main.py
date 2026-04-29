@@ -1,19 +1,56 @@
 import streamlit as st
+import sqlite3
 import pandas as pd
-import os
 from datetime import date, datetime
 
 st.set_page_config(page_title="Controle Motorista PRO", layout="wide")
 
-# ---------------- ARQUIVO USUÁRIOS ----------------
-arq_users = "usuarios.csv"
+# ================= BANCO =================
+conn = sqlite3.connect("app.db", check_same_thread=False)
+cursor = conn.cursor()
 
-if os.path.exists(arq_users):
-    users_df = pd.read_csv(arq_users)
-else:
-    users_df = pd.DataFrame(columns=["usuario","senha"])
+# CRIA TABELAS AUTOMATICAMENTE
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS usuarios (
+    usuario TEXT PRIMARY KEY,
+    senha TEXT
+)
+""")
 
-# ---------------- LOGIN / CADASTRO ----------------
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS ganhos (
+    usuario TEXT,
+    data TEXT,
+    ganho REAL,
+    gasto REAL,
+    km REAL,
+    inicio TEXT,
+    fim TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS metas (
+    usuario TEXT,
+    km REAL,
+    hora REAL,
+    lucro REAL
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS gastos (
+    usuario TEXT,
+    nome TEXT,
+    valor REAL,
+    status TEXT,
+    vencimento TEXT
+)
+""")
+
+conn.commit()
+
+# ================= LOGIN =================
 if "usuario" not in st.session_state:
     st.session_state.usuario = ""
 
@@ -24,16 +61,12 @@ if st.session_state.usuario == "":
 
     # LOGIN
     with aba_login:
-        user = st.text_input("Usuário")
+        user = st.text_input("Usuário").strip().lower()
         senha = st.text_input("Senha", type="password")
 
         if st.button("Entrar"):
-            user_db = users_df[
-                (users_df["usuario"] == user) &
-                (users_df["senha"] == senha)
-            ]
-
-            if not user_db.empty:
+            cursor.execute("SELECT * FROM usuarios WHERE usuario=? AND senha=?", (user, senha))
+            if cursor.fetchone():
                 st.session_state.usuario = user
                 st.rerun()
             else:
@@ -41,101 +74,55 @@ if st.session_state.usuario == "":
 
     # CADASTRO
     with aba_cadastro:
-        novo_user = st.text_input("Novo usuário")
+        novo_user = st.text_input("Novo usuário").strip().lower()
         nova_senha = st.text_input("Nova senha", type="password")
 
         if st.button("Cadastrar"):
-            if novo_user == "" or nova_senha == "":
-                st.warning("Preencha tudo")
-            elif novo_user in users_df["usuario"].values:
+            try:
+                cursor.execute("INSERT INTO usuarios VALUES (?,?)", (novo_user, nova_senha))
+                conn.commit()
+                st.success("Usuário criado!")
+                st.rerun()
+            except:
                 st.error("Usuário já existe")
-            else:
-                novo = pd.DataFrame([{
-                    "usuario": novo_user,
-                    "senha": nova_senha
-                }])
-                users_df = pd.concat([users_df, novo], ignore_index=True)
-                users_df.to_csv(arq_users, index=False)
-                st.success("Usuário criado! Faça login")
 
     st.stop()
 
 usuario = st.session_state.usuario
 
-# ---------------- ANIMAÇÃO ----------------
+# ================= ANIMAÇÃO =================
 def soltar_baloes():
-    st.markdown("""
-    <style>
-    .balloon {
-        position: fixed;
-        bottom: -100px;
-        width: 40px;
-        height: 60px;
-        border-radius: 50%;
-        animation: subir 6s linear;
-        opacity: 0.8;
-    }
-    @keyframes subir {
-        0% {transform: translateY(0);}
-        100% {transform: translateY(-120vh);}
-    }
-    </style>
-
-    <div class="balloon" style="left:10%; background:red;"></div>
-    <div class="balloon" style="left:30%; background:blue;"></div>
-    <div class="balloon" style="left:50%; background:green;"></div>
-    <div class="balloon" style="left:70%; background:orange;"></div>
-    <div class="balloon" style="left:90%; background:purple;"></div>
-    """, unsafe_allow_html=True)
-
-# ---------------- ARQUIVOS ----------------
-arq_ganhos = f"ganhos_{usuario}.csv"
-arq_meta = f"meta_{usuario}.csv"
-arq_gastos = f"gastos_{usuario}.csv"
+    st.balloons()
 
 st.title(f"🚖 Painel de {usuario}")
 
-# ---------------- ABAS ----------------
 aba1, aba2 = st.tabs(["🚖 Ganhos", "💸 Despesas"])
 
-# =========================================================
-# ======================= GANHOS ===========================
-# =========================================================
+# ================= GANHOS =================
 with aba1:
 
-    st.subheader("🎯 Suas Metas")
+    st.subheader("🎯 Metas")
 
-    if os.path.exists(arq_meta):
-        meta_df = pd.read_csv(arq_meta)
-        meta_km = float(meta_df["km"][0])
-        meta_hora = float(meta_df["hora"][0])
-        meta_lucro = float(meta_df["lucro"][0])
+    cursor.execute("SELECT km, hora, lucro FROM metas WHERE usuario=?", (usuario,))
+    meta = cursor.fetchone()
+
+    if meta:
+        meta_km, meta_hora, meta_lucro = meta
     else:
         meta_km, meta_hora, meta_lucro = 2.0, 30.0, 100.0
 
-    c1, c2, c3 = st.columns(3)
-    meta_km = c1.number_input("Meta R$/KM", value=meta_km)
-    meta_hora = c2.number_input("Meta R$/Hora", value=meta_hora)
-    meta_lucro = c3.number_input("Meta de Lucro", value=meta_lucro)
+    c1,c2,c3 = st.columns(3)
+    meta_km = c1.number_input("R$/KM", value=float(meta_km))
+    meta_hora = c2.number_input("R$/Hora", value=float(meta_hora))
+    meta_lucro = c3.number_input("Meta Lucro", value=float(meta_lucro))
 
     if st.button("Salvar metas"):
-        pd.DataFrame([{
-            "km": meta_km,
-            "hora": meta_hora,
-            "lucro": meta_lucro
-        }]).to_csv(arq_meta, index=False)
-        st.success("Metas salvas!")
+        cursor.execute("DELETE FROM metas WHERE usuario=?", (usuario,))
+        cursor.execute("INSERT INTO metas VALUES (?,?,?,?)", (usuario, meta_km, meta_hora, meta_lucro))
+        conn.commit()
+        st.success("Metas salvas")
 
-    # DADOS
-    if os.path.exists(arq_ganhos):
-        df_ganhos = pd.read_csv(arq_ganhos)
-    else:
-        df_ganhos = pd.DataFrame(columns=["Data","Ganho","Gasto","KM","Inicio","Fim"])
-
-    for col in ["Ganho","Gasto","KM"]:
-        df_ganhos[col] = pd.to_numeric(df_ganhos[col], errors="coerce").fillna(0)
-
-    st.subheader("📥 Lançamento do Dia")
+    st.subheader("📥 Lançamento")
 
     c1,c2,c3 = st.columns(3)
     ganho = c1.number_input("Ganho")
@@ -146,100 +133,73 @@ with aba1:
     fim = st.time_input("Fim")
 
     if st.button("Salvar Dia"):
-        if inicio == fim:
-            st.error("Horários inválidos")
-        else:
-            novo = pd.DataFrame([{
-                "Data": str(date.today()),
-                "Ganho": ganho,
-                "Gasto": gasto,
-                "KM": km,
-                "Inicio": inicio.strftime("%H:%M"),
-                "Fim": fim.strftime("%H:%M")
-            }])
-            df_ganhos = pd.concat([df_ganhos, novo], ignore_index=True)
-            df_ganhos.to_csv(arq_ganhos, index=False)
-            st.success("Salvo!")
-            st.rerun()
+        cursor.execute("INSERT INTO ganhos VALUES (?,?,?,?,?,?,?)", (
+            usuario,
+            str(date.today()),
+            ganho,
+            gasto,
+            km,
+            inicio.strftime("%H:%M"),
+            fim.strftime("%H:%M")
+        ))
+        conn.commit()
+        st.rerun()
 
-    st.subheader("📊 Resultado de Hoje")
+    st.subheader("📊 Hoje")
 
+    df = pd.read_sql_query(f"SELECT * FROM ganhos WHERE usuario='{usuario}'", conn)
     hoje = str(date.today())
-    df_hoje = df_ganhos[df_ganhos["Data"] == hoje]
+    df_hoje = df[df["data"] == hoje]
 
     if not df_hoje.empty:
-
-        total_ganho = df_hoje["Ganho"].sum()
-        total_gasto = df_hoje["Gasto"].sum()
-        lucro = total_ganho - total_gasto
+        lucro = df_hoje["ganho"].sum() - df_hoje["gasto"].sum()
 
         if lucro >= meta_lucro:
-            st.success("Meta batida! 🔥")
-            st.balloons()
+            st.success("Meta batida!")
             soltar_baloes()
         else:
-            falta = meta_lucro - lucro
-            st.warning(f"Faltam R$ {falta:.2f}")
+            st.warning(f"Faltam R$ {meta_lucro - lucro:.2f}")
 
-# =========================================================
-# ======================= DESPESAS =========================
-# =========================================================
+# ================= DESPESAS =================
 with aba2:
 
-    st.subheader("💸 Controle de Despesas")
+    st.subheader("💸 Despesas")
 
-    if os.path.exists(arq_gastos):
-        df_gastos = pd.read_csv(arq_gastos)
-    else:
-        df_gastos = pd.DataFrame(columns=["Nome","Valor","Status","Vencimento"])
-
-    nome_gasto = st.text_input("Nome da despesa")
+    nome = st.text_input("Nome da despesa")
     valor = st.number_input("Valor", min_value=0.0)
     venc = st.date_input("Vencimento")
 
-    if st.button("Adicionar gasto"):
-        if nome_gasto == "":
-            st.warning("Digite o nome da despesa")
-        else:
-            novo = pd.DataFrame([{
-                "Nome": nome_gasto,
-                "Valor": valor,
-                "Status": "Pendente",
-                "Vencimento": venc
-            }])
-            df_gastos = pd.concat([df_gastos, novo], ignore_index=True)
-            df_gastos.to_csv(arq_gastos, index=False)
-            st.success("Gasto adicionado!")
-            st.rerun()
+    if st.button("Adicionar"):
+        cursor.execute("INSERT INTO gastos VALUES (?,?,?,?,?)", (
+            usuario, nome, valor, "Pendente", str(venc)
+        ))
+        conn.commit()
+        st.rerun()
 
-    if not df_gastos.empty:
-        st.subheader("📋 Contas")
+    df = pd.read_sql_query(f"SELECT rowid, * FROM gastos WHERE usuario='{usuario}'", conn)
 
-        for i, r in df_gastos.iterrows():
+    if not df.empty:
+        for _, r in df.iterrows():
 
-            dias = (pd.to_datetime(r["Vencimento"]) - pd.to_datetime(date.today())).days
+            dias = (pd.to_datetime(r["vencimento"]) - pd.to_datetime(date.today())).days
+            por_dia = r["valor"] if dias <= 0 else r["valor"]/dias
 
-            if dias <= 0:
-                por_dia = r["Valor"]
-            else:
-                por_dia = r["Valor"] / dias
-
-            status_icon = "✅" if r["Status"] == "Pago" else "❌"
+            status = "✅" if r["status"] == "Pago" else "❌"
 
             c1,c2,c3,c4,c5,c6 = st.columns(6)
 
-            c1.write(f"{status_icon} {r['Nome']}")
-            c2.write(f"R$ {r['Valor']:.2f}")
+            c1.write(f"{status} {r['nome']}")
+            c2.write(f"R$ {r['valor']:.2f}")
             c3.write(f"{dias} dias")
-            c4.write(f"R$ {por_dia:.2f}/dia")
+            c4.write(f"{por_dia:.2f}/dia")
 
-            if r["Status"] == "Pendente":
-                if c5.button("✔", key=f"p{i}"):
-                    df_gastos.at[i,"Status"] = "Pago"
-                    df_gastos.to_csv(arq_gastos, index=False)
+            if r["status"] == "Pendente":
+                if c5.button("✔", key=f"p{r['rowid']}"):
+                    cursor.execute("UPDATE gastos SET status='Pago' WHERE rowid=?", (r["rowid"],))
+                    conn.commit()
                     st.rerun()
 
-            if c6.button("🗑️", key=f"d{i}"):
-                df_gastos = df_gastos.drop(i)
-                df_gastos.to_csv(arq_gastos, index=False)
+            if c6.button("🗑️", key=f"d{r['rowid']}"):
+                cursor.execute("DELETE FROM gastos WHERE rowid=?", (r["rowid"],))
+                conn.commit()
                 st.rerun()
