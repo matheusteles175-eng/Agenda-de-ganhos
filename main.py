@@ -3,11 +3,11 @@ import sqlite3
 import pandas as pd
 from datetime import date, datetime, timedelta
 
-# --- 1. CONFIGURAÇÃO ---
+# --- 1. CONFIGURAÇÃO E ESTILO ---
 st.set_page_config(page_title="Driver Pro Mateus", layout="wide")
 
 def conectar():
-    conn = sqlite3.connect("driver_mateus_v8.db", check_same_thread=False)
+    conn = sqlite3.connect("driver_mateus_v9.db", check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute("CREATE TABLE IF NOT EXISTS usuarios (usuario TEXT PRIMARY KEY, senha TEXT)")
     cursor.execute("CREATE TABLE IF NOT EXISTS veiculo (usuario TEXT PRIMARY KEY, km_ini REAL, km_alvo REAL, custo REAL, fipe REAL)")
@@ -19,77 +19,110 @@ def conectar():
 
 conn, cursor = conectar()
 
-# --- 2. LOGIN ---
+# --- 2. LOGIN E CADASTRO ---
 if "autenticado" not in st.session_state: st.session_state.autenticado = False
+
 if not st.session_state.autenticado:
-    u = st.text_input("Usuário").lower()
-    s = st.text_input("Senha", type="password")
-    if st.button("Entrar"):
-        st.session_state.autenticado, st.session_state.user = True, u
-        st.rerun()
+    st.title("🚖 Driver Pro - Acesso")
+    aba_login, aba_cad = st.tabs(["🔑 Entrar", "📝 Criar Conta"])
+    
+    with aba_login:
+        u = st.text_input("Usuário").lower().strip()
+        s = st.text_input("Senha", type="password")
+        if st.button("Acessar Aplicativo"):
+            user_db = cursor.execute("SELECT * FROM usuarios WHERE usuario=? AND senha=?", (u, s)).fetchone()
+            if user_db:
+                st.session_state.autenticado, st.session_state.user = True, u
+                st.rerun()
+            else: st.error("Usuário ou senha inválidos.")
+            
+    with aba_cad:
+        nu = st.text_input("Novo Usuário").lower().strip()
+        ns = st.text_input("Nova Senha", type="password")
+        if st.button("Finalizar Cadastro"):
+            try:
+                cursor.execute("INSERT INTO usuarios VALUES (?,?)", (nu, ns))
+                conn.commit()
+                st.success("Conta criada com sucesso! Faça o login.")
+            except: st.error("Este usuário já existe.")
     st.stop()
 
+# --- 3. VERIFICAÇÃO DE CONFIGURAÇÃO DO CARRO ---
 user = st.session_state.user
 v_data = cursor.execute("SELECT * FROM veiculo WHERE usuario=?", (user,)).fetchone()
 
-# --- 3. CONFIGURAÇÃO INICIAL DO CARRO (FORÇADA NO INÍCIO) ---
 if v_data is None:
-    st.header(f"Olá {user.capitalize()}, configure seu carro para começar!")
-    with st.form("cfg_ini"):
-        f1 = st.number_input("Valor FIPE do Carro", value=45000.0)
-        f2 = st.number_input("KM Atual", value=100000.0)
-        f3 = st.number_input("KM Próxima Troca Óleo", value=110000.0)
-        if st.form_submit_button("Salvar e Abrir App"):
-            cursor.execute("INSERT INTO veiculo VALUES (?,?,?,?,?)", (user, f2, f3, 300.0, f1))
+    st.header(f"Bem-vindo, {user.capitalize()}! 🚀")
+    st.subheader("Configure seu veículo para liberar o painel:")
+    with st.form("cfg_obrigatoria"):
+        f1 = st.number_input("Valor FIPE do seu veículo (R$)", value=40000.0)
+        f2 = st.number_input("KM Atual do Painel", value=100000.0)
+        f3 = st.number_input("KM da Próxima Troca de Óleo", value=110000.0)
+        if st.form_submit_button("Salvar e Abrir Meu App"):
+            cursor.execute("INSERT INTO veiculo VALUES (?,?,?,?,?)", (user, f2, f3, 350.0, f1))
             conn.commit()
             st.rerun()
     st.stop()
 
-# --- 4. ABAS (Ajustes Primeiro agora) ---
-t_cfg, t_ganhos, t_metas = st.tabs(["⚙️ Configurações/IPVA", "💰 Ganhos Diários", "🎯 Caixinhas de Sonhos"])
+# --- 4. PAINEL PRINCIPAL (ABAS REORGANIZADAS) ---
+st.title(f"Painel do {user.capitalize()} 🏁")
+t_cfg, t_ganhos, t_metas = st.tabs(["⚙️ Carro & IPVA", "💰 Ganhos Diários", "🎯 Caixinhas (Sonhos)"])
 
 with t_cfg:
-    st.subheader("Dados do Veículo e IPVA")
+    st.subheader("Informações do Veículo")
     v_fipe = v_data[4]
     v_ipva = v_fipe * 0.04
-    meses = max(1, (13 - date.today().month)) # Até Janeiro
-    st.metric("IPVA Total Estimado", f"R$ {v_ipva:.2f}")
-    st.info(f"Mateus, guarde R$ {v_ipva/meses:.2f} por mês para o IPVA.")
-    if st.button("Sair"): st.session_state.autenticado = False; st.rerun()
+    hoje = date.today()
+    vencimento = date(hoje.year + (1 if hoje.month > 1 else 0), 1, 15)
+    meses_ipva = max(1, (vencimento.year - hoje.year) * 12 + (vencimento.month - hoje.month))
+    
+    c1, c2 = st.columns(2)
+    c1.metric("IPVA Total (Estimado)", f"R$ {v_ipva:.2f}")
+    c2.metric("Guardar p/ Mês (IPVA)", f"R$ {v_ipva/meses_ipva:.2f}")
+    
+    st.info(f"💡 Mateus, reserve R$ {v_ipva/meses_ipva:.2f} todo mês para pagar o IPVA em Janeiro sem sustos.")
+    if st.button("Deslogar"): st.session_state.autenticado = False; st.rerun()
 
 with t_ganhos:
-    with st.form("g"):
-        g = st.number_input("Ganho de Hoje"); gst = st.number_input("Gasto")
-        if st.form_submit_button("Gravar"): st.success("Salvo!")
+    st.subheader("Registro de Entradas")
+    with st.form("form_ganhos"):
+        g = st.number_input("Quanto faturou hoje?")
+        gst = st.number_input("Gasto com combustível/outros")
+        if st.form_submit_button("Salvar Ganho"):
+            cursor.execute("INSERT INTO ganhos VALUES (?,?,?,?,?)", (user, str(hoje), g, gst, 0))
+            conn.commit(); st.success("Registrado!")
 
 with t_metas:
-    st.subheader("Suas Caixinhas")
-    with st.expander("Novo Sonho"):
-        with st.form("m"):
-            i = st.text_input("Item"); v = st.number_input("Valor"); d = st.date_input("Data")
+    st.subheader("Suas Conquistas")
+    with st.expander("➕ Criar Nova Caixinha"):
+        with st.form("f_metas"):
+            item = st.text_input("Qual o seu sonho?"); valor = st.number_input("Valor (R$)"); data_m = st.date_input("Data Alvo")
             if st.form_submit_button("Criar"):
-                cursor.execute("INSERT INTO metas (usuario, item, valor, data) VALUES (?,?,?,?)", (user, i, v, str(d)))
+                cursor.execute("INSERT INTO metas (usuario, item, valor, data) VALUES (?,?,?,?)", (user, item, valor, str(data_m)))
                 conn.commit(); st.rerun()
 
-    metas = pd.read_sql_query(f"SELECT * FROM metas WHERE usuario='{user}'", conn)
-    for _, m in metas.iterrows():
+    metas_db = pd.read_sql_query(f"SELECT * FROM metas WHERE usuario='{user}'", conn)
+    for _, m in metas_db.iterrows():
         dt_alvo = datetime.strptime(m['data'], "%Y-%m-%d").date()
-        meses_m = max(1, (dt_alvo.year - date.today().year) * 12 + (dt_alvo.month - date.today().month))
-        
-        st.markdown(f"### {m['item']} - R$ {m['valor']:.2f}")
-        st.write(f"👉 **Guardar R$ {m['valor']/meses_m:.2f} por mês**")
+        meses_m = max(1, (dt_alvo.year - hoje.year) * 12 + (dt_alvo.month - hoje.month))
+        st.markdown(f"---")
+        st.markdown(f"### 🚀 {m['item']} (Total: R$ {m['valor']:.2f})")
+        st.write(f"👉 **Planejamento: Guardar R$ {m['valor']/meses_m:.2f} por mês**")
         
         cols = st.columns(7)
         for x in range(7):
-            dia = date.today() - timedelta(days=3-x)
+            dia_f = hoje - timedelta(days=3-x)
             with cols[x]:
-                st.write(dia.strftime("%d/%m"))
-                if st.button("Marcar", key=f"{m['id']}{dia}"):
-                    st.session_state.temp = (m['id'], str(dia))
+                st.write(dia_f.strftime("%d/%m"))
+                if st.button("Marcar", key=f"m_{m['id']}_{dia_f}"):
+                    st.session_state.temp = (m['id'], str(dia_f), m['item'])
         
         if "temp" in st.session_state and st.session_state.temp[0] == m['id']:
-            with st.form("p"):
-                val = st.number_input("Quanto guardou hoje?")
+            with st.form(f"p_{m['id']}"):
+                v_pago = st.number_input(f"Quanto guardou hoje para {st.session_state.temp[2]}?")
                 if st.form_submit_button("Confirmar"):
-                    msg = "Boa! Mais perto do sonho!" if val > 0 else "Não desanima, Mateus! Amanhã você consegue!"
-                    st.info(msg); del st.session_state.temp
+                    if v_pago <= 0:
+                        st.warning(f"Não desanima, Mateus! O {st.session_state.temp[2]} está te esperando. Amanhã você consegue!")
+                    else:
+                        st.balloons(); st.success("Isso aí! O seu bem está cada vez mais perto!")
+                    del st.session_state.temp
