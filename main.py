@@ -5,6 +5,63 @@ from datetime import date, datetime
 
 st.set_page_config(page_title="Controle Motorista PRO", layout="wide")
 
+# ---------------- BANCO DE USUÁRIOS ----------------
+arq_users = "usuarios.csv"
+
+if os.path.exists(arq_users):
+    users_df = pd.read_csv(arq_users)
+else:
+    users_df = pd.DataFrame(columns=["usuario","senha"])
+
+# ---------------- LOGIN / CADASTRO ----------------
+if "usuario" not in st.session_state:
+    st.session_state.usuario = ""
+
+if st.session_state.usuario == "":
+    st.title("🔐 Acesso")
+
+    aba_login, aba_cadastro = st.tabs(["Login", "Cadastrar"])
+
+    # LOGIN
+    with aba_login:
+        user = st.text_input("Usuário")
+        senha = st.text_input("Senha", type="password")
+
+        if st.button("Entrar"):
+            user_db = users_df[
+                (users_df["usuario"] == user) &
+                (users_df["senha"] == senha)
+            ]
+
+            if not user_db.empty:
+                st.session_state.usuario = user
+                st.rerun()
+            else:
+                st.error("Usuário ou senha incorretos")
+
+    # CADASTRO
+    with aba_cadastro:
+        novo_user = st.text_input("Novo usuário")
+        nova_senha = st.text_input("Nova senha", type="password")
+
+        if st.button("Cadastrar"):
+            if novo_user == "" or nova_senha == "":
+                st.warning("Preencha tudo")
+            elif novo_user in users_df["usuario"].values:
+                st.error("Usuário já existe")
+            else:
+                novo = pd.DataFrame([{
+                    "usuario": novo_user,
+                    "senha": nova_senha
+                }])
+                users_df = pd.concat([users_df, novo], ignore_index=True)
+                users_df.to_csv(arq_users, index=False)
+                st.success("Usuário criado! Agora faça login")
+
+    st.stop()
+
+usuario = st.session_state.usuario
+
 # ---------------- ANIMAÇÃO ----------------
 def soltar_baloes():
     st.markdown("""
@@ -29,32 +86,6 @@ def soltar_baloes():
     <div class="balloon" style="left:70%; background:orange;"></div>
     <div class="balloon" style="left:90%; background:purple;"></div>
     """, unsafe_allow_html=True)
-
-# ---------------- LOGIN ----------------
-usuarios = {
-    "mateus": "123",
-    "joao": "456"
-}
-
-if "usuario" not in st.session_state:
-    st.session_state.usuario = ""
-
-if st.session_state.usuario == "":
-    st.title("🔐 Login")
-
-    user = st.text_input("Usuário")
-    senha = st.text_input("Senha", type="password")
-
-    if st.button("Entrar"):
-        if user in usuarios and usuarios[user] == senha:
-            st.session_state.usuario = user.strip().lower()
-            st.rerun()
-        else:
-            st.error("Usuário ou senha incorretos")
-
-    st.stop()
-
-usuario = st.session_state.usuario
 
 # ---------------- ARQUIVOS ----------------
 arq_ganhos = f"ganhos_{usuario}.csv"
@@ -132,107 +163,4 @@ with aba1:
     st.subheader("📊 Resultado de Hoje")
 
     hoje = str(date.today())
-    df_hoje = df[df["Data"] == hoje]
-
-    if not df_hoje.empty:
-
-        total_ganho = df_hoje["Ganho"].sum()
-        total_gasto = df_hoje["Gasto"].sum()
-        lucro = total_ganho - total_gasto
-        total_km = df_hoje["KM"].sum()
-
-        horas = 0
-        for _, r in df_hoje.iterrows():
-            t1 = datetime.strptime(r["Inicio"], "%H:%M")
-            t2 = datetime.strptime(r["Fim"], "%H:%M")
-            diff = (t2 - t1).total_seconds()/3600
-            if diff < 0:
-                diff += 24
-            horas += diff
-
-        valor_km = total_ganho/total_km if total_km else 0
-        valor_hora = total_ganho/horas if horas else 0
-
-        c1,c2,c3 = st.columns(3)
-        c1.metric("Lucro", f"R$ {lucro:.2f}")
-        c2.metric("R$/KM", f"{valor_km:.2f}")
-        c3.metric("R$/Hora", f"{valor_hora:.2f}")
-
-        if lucro >= meta_lucro:
-            st.success("Meta batida! 🔥")
-            st.balloons()
-            soltar_baloes()
-        else:
-            falta = meta_lucro - lucro
-            st.warning(f"Faltam R$ {falta:.2f}")
-
-# =========================================================
-# ======================= DESPESAS =========================
-# =========================================================
-with aba2:
-
-    st.subheader("💸 Controle de Despesas")
-
-    if os.path.exists(arq_gastos):
-        df = pd.read_csv(arq_gastos)
-    else:
-        df = pd.DataFrame(columns=["Nome","Categoria","Valor","Status","Vencimento"])
-
-    # -------- INPUT --------
-    nome_gasto = st.text_input("Nome da despesa")
-
-    categorias = ["Comida","Luz","Água","Internet","Dívida","Transporte","Outros"]
-    cat = st.selectbox("Categoria", categorias)
-
-    valor = st.number_input("Valor", min_value=0.0)
-    venc = st.date_input("Vencimento")
-
-    if st.button("Adicionar gasto"):
-        novo = pd.DataFrame([{
-            "Nome": nome_gasto,
-            "Categoria": cat,
-            "Valor": valor,
-            "Status": "Pendente",
-            "Vencimento": venc
-        }])
-        df = pd.concat([df, novo], ignore_index=True)
-        df.to_csv(arq_gastos, index=False)
-        st.success("Gasto adicionado!")
-        st.rerun()
-
-    # -------- LISTA --------
-    if not df.empty:
-
-        st.subheader("📋 Contas")
-
-        for i, r in df.iterrows():
-
-            dias = (pd.to_datetime(r["Vencimento"]) - pd.to_datetime(date.today())).days
-
-            if dias <= 0:
-                por_dia = r["Valor"]
-            else:
-                por_dia = r["Valor"] / dias
-
-            # STATUS VISUAL
-            status_icon = "✅" if r["Status"] == "Pago" else "❌"
-
-            c1,c2,c3,c4,c5,c6 = st.columns([2,2,2,2,1,1])
-
-            c1.write(f"{status_icon} {r['Nome']}")
-            c2.write(f"R$ {r['Valor']:.2f}")
-            c3.write(f"{dias} dias")
-            c4.write(f"R$ {por_dia:.2f}/dia")
-
-            # botão pagar
-            if r["Status"] == "Pendente":
-                if c5.button("✔", key=f"p{i}"):
-                    df.at[i, "Status"] = "Pago"
-                    df.to_csv(arq_gastos, index=False)
-                    st.rerun()
-
-            # botão excluir
-            if c6.button("🗑️", key=f"d{i}"):
-                df = df.drop(i)
-                df.to_csv(arq_gastos, index=False)
-                st.rerun()
+    df_hoje = df[df["Data"] == hoje
