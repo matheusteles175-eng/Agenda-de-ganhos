@@ -3,187 +3,188 @@ import sqlite3
 import pandas as pd
 from datetime import date, datetime, timedelta
 
-# --- 1. CONFIGURAÇÃO INICIAL (OBRIGATÓRIO SER O PRIMEIRO) ---
-st.set_page_config(page_title="Driver Pro Oficial", layout="wide")
+# --- 1. CONFIGURAÇÃO E ESTILO ---
+st.set_page_config(page_title="Driver Pro Inteligente", layout="wide", page_icon="🚖")
 
-# --- 2. GERENCIAMENTO DE BANCO DE DADOS (REVISADO) ---
+def aplicar_estilo():
+    st.markdown("""
+        <style>
+        .main { background-color: #f5f7f9; }
+        .stMetric { background-color: white; padding: 15px; border-radius: 10px; box-shadow: 2px 2px 10px rgba(0,0,0,0.05); }
+        .metric-card {
+            background-color: white;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 2px 2px 10px rgba(0,0,0,0.05);
+            border-left: 5px solid #1E88E5;
+        }
+        .alerta-manutencao {
+            padding: 20px;
+            border-radius: 15px;
+            color: white;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+aplicar_estilo()
+
+# --- 2. BANCO DE DADOS UNIFICADO ---
 def conectar():
-    """Cria conexão e garante que as tabelas existam"""
-    conn = sqlite3.connect("driver_pro.db", check_same_thread=False)
+    conn = sqlite3.connect("driver_completo.db", check_same_thread=False)
     cursor = conn.cursor()
-    # Tabela de Usuários
     cursor.execute("CREATE TABLE IF NOT EXISTS usuarios (usuario TEXT PRIMARY KEY, senha TEXT)")
-    # Tabela de Ganhos
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS ganhos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            usuario TEXT, data TEXT, ganho REAL, gasto REAL, km REAL, 
-            inicio TEXT, fim TEXT
-        )
-    """)
-    # Tabela de Metas
+    cursor.execute("""CREATE TABLE IF NOT EXISTS ganhos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT, data TEXT, 
+        ganho REAL, gasto REAL, km_rodado REAL, inicio TEXT, fim TEXT)""")
     cursor.execute("CREATE TABLE IF NOT EXISTS metas (usuario TEXT PRIMARY KEY, km_alvo REAL, hora_alvo REAL, lucro_alvo REAL)")
+    cursor.execute("""CREATE TABLE IF NOT EXISTS veiculo (
+        usuario TEXT PRIMARY KEY, km_inicial REAL, km_troca_alvo REAL, custo_estimado REAL)""")
     conn.commit()
     return conn, cursor
 
 conn, cursor = conectar()
 
-# --- 3. CONTROLE DE LOGIN (SESSION STATE) ---
+# --- 3. SISTEMA DE LOGIN ---
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
-if "user_logado" not in st.session_state:
-    st.session_state.user_logado = ""
 
-# --- 4. TELA DE LOGIN / CADASTRO ---
 if not st.session_state.autenticado:
-    st.title("🚖 Driver Pro - Acesso ao Sistema")
-    
-    tab_login, tab_cadastro = st.tabs(["Fazer Login", "Criar Nova Conta"])
-    
-    with tab_login:
-        with st.form("form_login"):
-            u_input = st.text_input("Usuário").strip().lower()
-            s_input = st.text_input("Senha", type="password")
-            btn_login = st.form_submit_button("Entrar no Painel")
-            
-            if btn_login:
-                if u_input and s_input:
-                    cursor.execute("SELECT * FROM usuarios WHERE usuario=? AND senha=?", (u_input, s_input))
-                    user_data = cursor.fetchone()
-                    if user_data:
-                        st.session_state.autenticado = True
-                        st.session_state.user_logado = u_input
-                        st.rerun()
-                    else:
-                        st.error("❌ Usuário não encontrado ou senha incorreta.")
-                else:
-                    st.warning("Preencha todos os campos.")
+    st.title("🚖 Driver Pro - Acesso")
+    aba_l, aba_c = st.tabs(["🔑 Login", "📝 Cadastro"])
+    with aba_l:
+        with st.form("l"):
+            u = st.text_input("Usuário").strip().lower()
+            s = st.text_input("Senha", type="password")
+            if st.form_submit_button("Entrar"):
+                cursor.execute("SELECT * FROM usuarios WHERE usuario=? AND senha=?", (u, s))
+                if cursor.fetchone():
+                    st.session_state.autenticado = True
+                    st.session_state.user = u
+                    st.rerun()
+                else: st.error("Dados incorretos.")
+    with aba_c:
+        with st.form("c"):
+            nu = st.text_input("Novo Usuário").strip().lower()
+            ns = st.text_input("Senha").strip()
+            if st.form_submit_button("Cadastrar"):
+                try:
+                    cursor.execute("INSERT INTO usuarios VALUES (?,?)", (nu, ns))
+                    conn.commit()
+                    st.success("Cadastrado! Faça login.")
+                except: st.error("Usuário já existe.")
+    st.stop()
 
-    with tab_cadastro:
-        with st.form("form_cadastro"):
-            u_novo = st.text_input("Escolha um Nome de Usuário").strip().lower()
-            s_nova = st.text_input("Escolha uma Senha", type="password")
-            btn_cad = st.form_submit_button("Finalizar Cadastro")
-            
-            if btn_cad:
-                if u_novo and s_nova:
-                    try:
-                        cursor.execute("INSERT INTO usuarios (usuario, senha) VALUES (?, ?)", (u_novo, s_nova))
-                        conn.commit()
-                        st.success(f"✅ Usuário '{u_novo}' cadastrado! Agora vá na aba de Login.")
-                    except sqlite3.IntegrityError:
-                        st.error("⚠️ Este nome de usuário já está em uso.")
-                else:
-                    st.warning("Preencha os campos para cadastrar.")
-    
-    st.stop() # Bloqueia o restante do app enquanto não logar
+user = st.session_state.user
 
-# --- 5. ÁREA DO MOTORISTA (LOGADO) ---
-usuario = st.session_state.user_logado
+# --- 4. CARREGAMENTO DE DADOS E INTELIGÊNCIA ---
+# Buscar dados do veículo
+v_data = cursor.execute("SELECT * FROM veiculo WHERE usuario=?", (user,)).fetchone()
+km_partida = v_data[1] if v_data else 204624.0
+km_proxima_troca = v_data[2] if v_data else 206600.0
+custo_previsto = v_data[3] if v_data else 300.0
 
-# Barra Lateral
+# Buscar histórico de ganhos para somar KM
+df_ganhos = pd.read_sql_query(f"SELECT * FROM ganhos WHERE usuario='{user}'", conn)
+total_rodado_no_app = df_ganhos['km_rodado'].sum() if not df_ganhos.empty else 0
+km_atual_calculado = km_partida + total_rodado_no_app
+km_restante = km_proxima_troca - km_atual_calculado
+
+# --- 5. BARRA LATERAL ---
 with st.sidebar:
-    st.subheader(f"👤 Motorista: {usuario.upper()}")
-    if st.button("Encerrar Sessão (Sair)"):
+    st.markdown(f"### Olá, **{user.upper()}**!")
+    if st.button("Sair"):
         st.session_state.autenticado = False
-        st.session_state.user_logado = ""
         st.rerun()
     
     st.divider()
-    st.subheader("🎯 Suas Metas")
-    cursor.execute("SELECT km_alvo, hora_alvo, lucro_alvo FROM metas WHERE usuario=?", (usuario,))
-    meta_at = cursor.fetchone()
-    
-    m_km = st.number_input("Meta R$/KM", value=meta_at[0] if meta_at else 2.0)
-    m_hr = st.number_input("Meta R$/Hora", value=meta_at[1] if meta_at else 30.0)
-    m_lc = st.number_input("Meta Lucro Dia", value=meta_at[2] if meta_at else 150.0)
-    
-    if st.button("Salvar Metas"):
-        cursor.execute("INSERT OR REPLACE INTO metas VALUES (?, ?, ?, ?)", (usuario, m_km, m_hr, m_lc))
+    st.subheader("⚙️ Configuração do Carro")
+    new_km_partida = st.number_input("KM Inicial (O que está no painel hoje)", value=float(km_partida))
+    new_km_troca = st.number_input("Trocar com (KM)", value=float(km_proxima_troca))
+    new_custo = st.number_input("Custo Estimado Manutenção (R$)", value=float(custo_previsto))
+    if st.button("Atualizar Carro"):
+        cursor.execute("INSERT OR REPLACE INTO veiculo VALUES (?,?,?,?)", (user, new_km_partida, new_km_troca, new_custo))
         conn.commit()
-        st.toast("Metas salvas com sucesso!")
+        st.rerun()
 
-# --- 6. FUNÇÕES DE CÁLCULO ---
-def calcular_duracao(inicio, fim):
-    try:
-        t1 = datetime.strptime(inicio, "%H:%M")
-        t2 = datetime.strptime(fim, "%H:%M")
-        diff = t2 - t1
-        return diff.total_seconds() / 3600 # Retorna em horas decimais
-    except:
-        return 0
+# --- 6. PAINEL PRINCIPAL ---
+st.title("🏁 Driver Pro Inteligente")
 
-# --- 7. PAINEL PRINCIPAL ---
-st.header("📊 Gestão de Ganhos e Médias")
+# ALERTAS CRÍTICOS NO TOPO
+if km_restante <= 1000:
+    cor = "#EF6C00" if km_restante > 300 else "#C62828"
+    st.markdown(f"""
+        <div class="alerta-manutencao" style="background-color: {cor};">
+            🚨 ATENÇÃO MATEUS: Faltam {km_restante:.0f} KM para sua manutenção!<br>
+            Prepare R$ {custo_previsto:.2f} para a troca de óleo e filtros.
+        </div>
+    """, unsafe_allow_html=True)
 
-aba_painel, aba_hist = st.tabs(["📈 Dashboard Diário", "📋 Histórico de Corridas"])
+tab_ganhos, tab_manutencao, tab_historico = st.tabs(["💰 Ganhos & Metas", "🔧 Inteligência Mecânica", "📋 Histórico"])
 
-with aba_painel:
-    col_l, col_r = st.columns([1, 2])
+with tab_ganhos:
+    col_input, col_stats = st.columns([1, 2])
     
-    with col_l:
-        st.subheader("Lançamento")
-        with st.form("add_ganho"):
-            f_data = st.date_input("Data", date.today())
-            f_ganho = st.number_input("Ganho Bruto (R$)", min_value=0.0)
-            f_gasto = st.number_input("Gasto/Combustível (R$)", min_value=0.0)
-            f_km = st.number_input("KM Rodados", min_value=0.0)
-            f_ini = st.time_input("Início Jornada", value=datetime.strptime("08:00", "%H:%M"))
-            f_fim = st.time_input("Fim Jornada", value=datetime.strptime("17:00", "%H:%M"))
-            
-            if st.form_submit_button("Gravar no Banco"):
-                cursor.execute("INSERT INTO ganhos (usuario, data, ganho, gasto, km, inicio, fim) VALUES (?,?,?,?,?,?,?)",
-                               (usuario, str(f_data), f_ganho, f_gasto, f_km, f_ini.strftime("%H:%M"), f_fim.strftime("%H:%M")))
+    with col_input:
+        st.markdown("<div class='metric-card'><h4>📝 Lançar Dia</h4></div>", unsafe_allow_html=True)
+        with st.form("f_dia", clear_on_submit=True):
+            d_data = st.date_input("Data", date.today())
+            d_ganho = st.number_input("Ganho Total (R$)", step=10.0)
+            d_gasto = st.number_input("Combustível (R$)", step=5.0)
+            d_km = st.number_input("KM Rodados Hoje", step=1.0)
+            if st.form_submit_button("Salvar Dia"):
+                cursor.execute("INSERT INTO ganhos (usuario, data, ganho, gasto, km_rodado, inicio, fim) VALUES (?,?,?,?,?,?,?)",
+                               (user, str(d_data), d_ganho, d_gasto, d_km, "08:00", "17:00"))
                 conn.commit()
-                st.success("Salvo!")
                 st.rerun()
 
-    with col_r:
-        st.subheader("Análise de Desempenho")
-        df = pd.read_sql_query(f"SELECT * FROM ganhos WHERE usuario='{usuario}'", conn)
-        
-        if not df.empty:
-            df['data'] = pd.to_datetime(df['data']).dt.date
-            df['lucro'] = df['ganho'] - df['gasto']
-            df['horas_trab'] = df.apply(lambda r: calcular_duracao(r['inicio'], r['fim']), axis=1)
+    with col_stats:
+        if not df_ganhos.empty:
+            df_ganhos['lucro'] = df_ganhos['ganho'] - df_ganhos['gasto']
+            l_total = df_ganhos['lucro'].sum()
             
-            periodo = st.radio("Filtrar por:", ["Hoje", "Últimos 7 Dias", "Mês Atual"], horizontal=True)
-            hoje_dt = date.today()
+            c1, c2, c3 = st.columns(3)
+            c1.metric("KM Atual do Carro", f"{km_atual_calculado:.0f} km")
+            c2.metric("Lucro Acumulado", f"R$ {l_total:.2f}")
+            c3.metric("Falta p/ Manutenção", f"{km_restante:.0f} km")
             
-            if periodo == "Hoje":
-                filtro_df = df[df['data'] == hoje_dt]
-            elif periodo == "Últimos 7 Dias":
-                filtro_df = df[df['data'] >= (hoje_dt - timedelta(days=7))]
-            else:
-                filtro_df = df[df['data'] >= hoje_dt.replace(day=1)]
-            
-            if not filtro_df.empty:
-                l_total = filtro_df['lucro'].sum()
-                km_total = filtro_df['km'].sum()
-                hr_total = filtro_df['horas_trab'].sum()
-                
-                m_km_real = l_total / km_total if km_total > 0 else 0
-                m_hr_real = l_total / hr_total if hr_total > 0 else 0
-                
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Lucro Líquido", f"R$ {l_total:.2f}")
-                c2.metric("Média R$/KM", f"R$ {m_km_real:.2f}", f"{m_km_real - m_km:.2f}")
-                c3.metric("Média R$/Hora", f"R$ {m_hr_real:.2f}", f"{m_hr_real - m_hr:.2f}")
-                
-                if l_total >= m_lc and periodo == "Hoje":
-                    st.balloons()
-                    st.success("✅ Parabéns! Meta de lucro batida hoje!")
-            else:
-                st.info("Nenhum registro para este período.")
+            st.write("### Evolução Diária")
+            st.line_chart(df_ganhos.tail(10).set_index('data')['lucro'])
+        else: st.info("Lance seu primeiro dia para ver as estatísticas!")
 
-with aba_hist:
-    st.subheader("Histórico Completo")
-    df_lista = pd.read_sql_query(f"SELECT id, data, ganho, gasto, km, inicio, fim FROM ganhos WHERE usuario='{usuario}' ORDER BY id DESC", conn)
-    if not df_lista.empty:
-        st.dataframe(df_lista, use_container_width=True)
+with tab_manutencao:
+    st.header("🧠 Assistente de Manutenção Inteligente")
+    if not df_ganhos.empty:
+        # Lógica de Inteligência de Dados
+        media_km_dia = df_ganhos['km_rodado'].mean()
+        media_lucro_dia = df_ganhos['lucro'].mean()
         
-        id_excluir = st.number_input("ID para remover", min_value=1, step=1)
-        if st.button("Confirmar Exclusão"):
-            cursor.execute("DELETE FROM ganhos WHERE id=? AND usuario=?", (id_excluir, usuario))
+        # Quantos dias faltam?
+        dias_restantes = km_restante / media_km_dia if media_km_dia > 0 else 0
+        reserva_sugerida = custo_previsto / dias_restantes if dias_restantes > 1 else custo_previsto
+        
+        c_a, c_b = st.columns(2)
+        with c_a:
+            st.subheader("Estimativa de Tempo")
+            st.info(f"Você roda em média **{media_km_dia:.1f} KM/dia**.")
+            st.warning(f"Nesse ritmo, você atingirá o limite da manutenção em **{dias_restantes:.0f} dias**.")
+        
+        with c_b:
+            st.subheader("Planejamento Financeiro")
+            st.success(f"Sugestão: Guarde **R$ {reserva_sugerida:.2f}** por dia.")
+            st.write(f"Isso é apenas {((reserva_sugerida/media_lucro_dia)*100):.1f}% do seu lucro diário médio.")
+            
+        st.progress(max(0, min(1.0, 1 - (km_restante/2000)))) # Barra de progresso baseada nos últimos 2000km
+    else:
+        st.write("Aguardando dados suficientes para calcular médias...")
+
+with tab_historico:
+    st.subheader("Todos os Lançamentos")
+    if not df_ganhos.empty:
+        st.dataframe(df_ganhos[['id', 'data', 'ganho', 'gasto', 'km_rodado', 'lucro']], use_container_width=True)
+        id_del = st.number_input("ID para excluir", min_value=1, step=1)
+        if st.button("🗑️ Excluir"):
+            cursor.execute("DELETE FROM ganhos WHERE id=? AND usuario=?", (id_del, user))
             conn.commit()
             st.rerun()
