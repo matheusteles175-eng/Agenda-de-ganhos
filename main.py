@@ -4,187 +4,210 @@ import pandas as pd
 from datetime import date, datetime, timedelta
 
 # --- 1. CONFIGURAÇÃO E ESTILO ---
-st.set_page_config(page_title="Driver Pro Inteligente", layout="wide", page_icon="🚖")
+st.set_page_config(page_title="Driver Pro - Conquistas", layout="wide", page_icon="🚀")
 
 def aplicar_estilo():
     st.markdown("""
         <style>
-        .main { background-color: #f5f7f9; }
-        .stMetric { background-color: white; padding: 15px; border-radius: 10px; box-shadow: 2px 2px 10px rgba(0,0,0,0.05); }
-        .metric-card {
-            background-color: white;
-            padding: 20px;
-            border-radius: 15px;
-            box-shadow: 2px 2px 10px rgba(0,0,0,0.05);
-            border-left: 5px solid #1E88E5;
-        }
-        .alerta-manutencao {
-            padding: 20px;
-            border-radius: 15px;
+        .main { background-color: #f0f2f6; }
+        .stMetric { background-color: white; padding: 15px; border-radius: 15px; box-shadow: 0px 4px 10px rgba(0,0,0,0.05); }
+        
+        /* Card de Meta Estilo Caixinha */
+        .card-conquista {
+            background: linear-gradient(135deg, #6e8efb, #a777e3);
+            padding: 25px;
+            border-radius: 20px;
             color: white;
             margin-bottom: 20px;
-            font-weight: bold;
+            box-shadow: 0px 10px 20px rgba(110, 142, 251, 0.3);
+        }
+        
+        .frase-motivacional {
+            font-style: italic;
+            color: #555;
+            margin-bottom: 20px;
+            text-align: center;
+            font-size: 1.1em;
+        }
+        
+        .sidebar-user {
+            text-align: center;
+            padding: 10px;
+            background: #ffffff;
+            border-radius: 10px;
+            margin-bottom: 20px;
         }
         </style>
     """, unsafe_allow_html=True)
 
 aplicar_estilo()
 
-# --- 2. BANCO DE DADOS UNIFICADO ---
+# --- 2. BANCO DE DADOS ---
 def conectar():
-    conn = sqlite3.connect("driver_completo.db", check_same_thread=False)
+    conn = sqlite3.connect("driver_premium_v1.db", check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute("CREATE TABLE IF NOT EXISTS usuarios (usuario TEXT PRIMARY KEY, senha TEXT)")
-    cursor.execute("""CREATE TABLE IF NOT EXISTS ganhos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT, data TEXT, 
-        ganho REAL, gasto REAL, km_rodado REAL, inicio TEXT, fim TEXT)""")
-    cursor.execute("CREATE TABLE IF NOT EXISTS metas (usuario TEXT PRIMARY KEY, km_alvo REAL, hora_alvo REAL, lucro_alvo REAL)")
-    cursor.execute("""CREATE TABLE IF NOT EXISTS veiculo (
-        usuario TEXT PRIMARY KEY, km_inicial REAL, km_troca_alvo REAL, custo_estimado REAL)""")
+    cursor.execute("CREATE TABLE IF NOT EXISTS ganhos (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT, data TEXT, ganho REAL, gasto REAL, km_rodado REAL)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS veiculo (usuario TEXT PRIMARY KEY, km_inicial REAL, km_troca_alvo REAL, custo_estimado REAL, valor_fipe REAL)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS metas_livres (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT, item TEXT, valor_total REAL, data_alvo TEXT)")
     conn.commit()
     return conn, cursor
 
 conn, cursor = conectar()
 
-# --- 3. SISTEMA DE LOGIN ---
-if "autenticado" not in st.session_state:
-    st.session_state.autenticado = False
-
+# --- 3. LOGIN ---
+if "autenticado" not in st.session_state: st.session_state.autenticado = False
 if not st.session_state.autenticado:
-    st.title("🚖 Driver Pro - Acesso")
-    aba_l, aba_c = st.tabs(["🔑 Login", "📝 Cadastro"])
+    st.title("🚖 Driver Pro - Seu Futuro Começa Aqui")
+    aba_l, aba_c = st.tabs(["🔑 Acessar", "📝 Começar Agora"])
     with aba_l:
-        with st.form("l"):
-            u = st.text_input("Usuário").strip().lower()
-            s = st.text_input("Senha", type="password")
-            if st.form_submit_button("Entrar"):
-                cursor.execute("SELECT * FROM usuarios WHERE usuario=? AND senha=?", (u, s))
-                if cursor.fetchone():
-                    st.session_state.autenticado = True
-                    st.session_state.user = u
-                    st.rerun()
-                else: st.error("Dados incorretos.")
+        u = st.text_input("Usuário").strip().lower()
+        s = st.text_input("Senha", type="password")
+        if st.button("Entrar no Painel"):
+            cursor.execute("SELECT * FROM usuarios WHERE usuario=? AND senha=?", (u, s))
+            if cursor.fetchone():
+                st.session_state.autenticado, st.session_state.user = True, u
+                st.rerun()
     with aba_c:
-        with st.form("c"):
-            nu = st.text_input("Novo Usuário").strip().lower()
-            ns = st.text_input("Senha").strip()
-            if st.form_submit_button("Cadastrar"):
-                try:
-                    cursor.execute("INSERT INTO usuarios VALUES (?,?)", (nu, ns))
-                    conn.commit()
-                    st.success("Cadastrado! Faça login.")
-                except: st.error("Usuário já existe.")
+        nu = st.text_input("Nome de Usuário").strip().lower()
+        ns = st.text_input("Sua Senha", type="password")
+        if st.button("Criar Minha Conta"):
+            try:
+                cursor.execute("INSERT INTO usuarios VALUES (?,?)", (nu, ns))
+                conn.commit()
+                st.success("Conta criada! Agora é só entrar.")
+            except: st.error("Esse nome já está em uso.")
     st.stop()
 
 user = st.session_state.user
 
-# --- 4. CARREGAMENTO DE DADOS E INTELIGÊNCIA ---
-# Buscar dados do veículo
+# --- 4. CARREGAR DADOS ---
 v_data = cursor.execute("SELECT * FROM veiculo WHERE usuario=?", (user,)).fetchone()
-km_partida = v_data[1] if v_data else 204624.0
-km_proxima_troca = v_data[2] if v_data else 206600.0
-custo_previsto = v_data[3] if v_data else 300.0
-
-# Buscar histórico de ganhos para somar KM
 df_ganhos = pd.read_sql_query(f"SELECT * FROM ganhos WHERE usuario='{user}'", conn)
-total_rodado_no_app = df_ganhos['km_rodado'].sum() if not df_ganhos.empty else 0
-km_atual_calculado = km_partida + total_rodado_no_app
-km_restante = km_proxima_troca - km_atual_calculado
+metas_livres = pd.read_sql_query(f"SELECT * FROM metas_livres WHERE usuario='{user}'", conn)
 
-# --- 5. BARRA LATERAL ---
-with st.sidebar:
-    st.markdown(f"### Olá, **{user.upper()}**!")
-    if st.button("Sair"):
+if v_data is None:
+    st.header(f"Seja bem-vindo, {user.capitalize()}! 🚀")
+    st.subheader("Para onde vamos hoje?")
+    with st.form("config_v"):
+        st.write("Antes de começar, me conte um pouco sobre seu carro para eu cuidar dele por você.")
+        f1 = st.number_input("KM Atual do Painel:", value=200000.0)
+        f2 = st.number_input("KM da Próxima Troca de Óleo:", value=210000.0)
+        f3 = st.number_input("Quanto custa essa manutenção em média? (R$):", value=350.0)
+        f4 = st.number_input("Qual o valor de mercado do seu carro? (R$):", value=45000.0)
+        if st.form_submit_button("Configurar Tudo"):
+            cursor.execute("INSERT INTO veiculo VALUES (?,?,?,?,?)", (user, f1, f2, f3, f4))
+            conn.commit()
+            st.rerun()
+    st.stop()
+
+km_partida, km_alvo, custo_m, valor_fipe = v_data[1], v_data[2], v_data[3], v_data[4]
+
+# --- 5. INTERFACE DASHBOARD ---
+st.title(f"Painel de Conquistas - {user.capitalize()} 🏁")
+st.markdown(f'<p class="frase-motivacional">"O trabalho dignifica o homem e o planejamento realiza seus sonhos."</p>', unsafe_allow_html=True)
+
+tab1, tab2, tab3, tab4 = st.tabs(["💰 Meus Ganhos", "🔧 Cuidado com o Carro", "🎯 Meus Sonhos", "⚙️ Configurações"])
+
+# --- ABA 1: GANHOS ---
+with tab1:
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        with st.form("f_ganho", clear_on_submit=True):
+            st.subheader("📥 Registrar Jornada")
+            g = st.number_input("Quanto você faturou hoje? (R$)", min_value=0.0)
+            p = st.number_input("Gasto com combustível (R$)", min_value=0.0)
+            k = st.number_input("Quantos KM você rodou?", min_value=0.0)
+            if st.form_submit_button("Salvar Dia"):
+                cursor.execute("INSERT INTO ganhos (usuario, data, ganho, gasto, km_rodado) VALUES (?,?,?,?,?)", (user, str(date.today()), g, p, k))
+                conn.commit()
+                st.rerun()
+    with c2:
+        if not df_ganhos.empty:
+            km_atual_real = km_partida + df_ganhos['km_rodado'].sum()
+            st.metric("Seu Carro está com", f"{km_atual_real:.0f} km")
+            st.write("### Seu desempenho nos últimos dias")
+            st.area_chart(df_ganhos.tail(10).set_index('data')['ganho'])
+
+# --- ABA 2: MANUTENÇÃO E IPVA ---
+with tab2:
+    st.subheader("🛡️ Proteja seu instrumento de trabalho")
+    col_m, col_i = st.columns(2)
+    with col_m:
+        km_atual = km_partida + df_ganhos['km_rodado'].sum()
+        resta = km_alvo - km_atual
+        st.metric("KM para Troca de Óleo", f"{resta:.0f} km")
+        if resta <= 1000:
+            st.error(f"⚠️ Atenção {user.capitalize()}, a manutenção está próxima!")
+        
+    with col_i:
+        v_ipva = valor_fipe * 0.04
+        st.metric("Previsão IPVA (SP)", f"R$ {v_ipva:.2f}")
+        st.info("💡 Pagar o IPVA à vista garante desconto. Comece a guardar agora!")
+
+# --- ABA 3: METAS E SONHOS (A PARTE QUE VOCÊ PEDIU) ---
+with tab3:
+    st.header("🎯 Qual o seu próximo objetivo?")
+    st.write("Não trabalhe apenas para pagar contas. Trabalhe para conquistar seus bens!")
+    
+    col_add, col_list = st.columns([1, 2])
+    
+    with col_add:
+        st.markdown("""
+        <div style="background-color: white; padding: 20px; border-radius: 15px; border: 1px solid #ddd;">
+            <strong>✨ Adicionar Novo Sonho</strong><br><br>
+        """, unsafe_allow_html=True)
+        with st.form("meta_livre", clear_on_submit=True):
+            m_item = st.text_input("O que você quer conquistar?", placeholder="Ex: Moto Nova, Pneus, Viagem...")
+            m_valor = st.number_input("Quanto custa esse sonho? (R$)", min_value=0.0)
+            m_data = st.date_input("Até quando quer realizar?")
+            if st.form_submit_button("Criar Minha Caixinha"):
+                cursor.execute("INSERT INTO metas_livres (usuario, item, valor_total, data_alvo) VALUES (?,?,?,?)", (user, m_item, m_valor, str(m_data)))
+                conn.commit()
+                st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+    
+    with col_list:
+        if not metas_livres.empty:
+            for i, r in metas_livres.iterrows():
+                d_alvo = datetime.strptime(r['data_alvo'], "%Y-%m-%d").date()
+                dias_rest = (d_alvo - date.today()).days
+                dias_rest = max(1, dias_rest)
+                v_diario = r['valor_total'] / dias_rest
+                
+                st.markdown(f"""
+                <div class="card-conquista">
+                    <span style="font-size: 1.5em;">🚀 {r['item'].upper()}</span><br>
+                    <hr style="border: 0.5px solid rgba(255,255,255,0.3)">
+                    <span style="font-size: 1.1em;">Valor do Objetivo: <b>R$ {r['valor_total']:.2f}</b></span><br>
+                    <span>Faltam <b>{dias_rest} dias</b> para você conquistar!</span><br><br>
+                    <div style="background: rgba(255,255,255,0.2); padding: 10px; border-radius: 10px; text-align: center;">
+                        <span style="font-size: 1.2em;">👉 Guarde <b>R$ {v_diario:.2f} por dia</b></span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button(f"Concluí esta meta! ✅", key=f"btn_{r['id']}"):
+                    cursor.execute("DELETE FROM metas_livres WHERE id=?", (r['id'],))
+                    conn.commit()
+                    st.rerun()
+        else:
+            st.info("Use o formulário ao lado para cadastrar seu primeiro sonho. Vamos juntos realizar!")
+
+# --- ABA 4: AJUSTES ---
+with tab4:
+    st.subheader("⚙️ Configurações Gerais")
+    if st.button("🚪 Sair do Sistema"):
         st.session_state.autenticado = False
         st.rerun()
     
-    st.divider()
-    st.subheader("⚙️ Configuração do Carro")
-    new_km_partida = st.number_input("KM Inicial (O que está no painel hoje)", value=float(km_partida))
-    new_km_troca = st.number_input("Trocar com (KM)", value=float(km_proxima_troca))
-    new_custo = st.number_input("Custo Estimado Manutenção (R$)", value=float(custo_previsto))
-    if st.button("Atualizar Carro"):
-        cursor.execute("INSERT OR REPLACE INTO veiculo VALUES (?,?,?,?)", (user, new_km_partida, new_km_troca, new_custo))
-        conn.commit()
-        st.rerun()
-
-# --- 6. PAINEL PRINCIPAL ---
-st.title("🏁 Driver Pro Inteligente")
-
-# ALERTAS CRÍTICOS NO TOPO
-if km_restante <= 1000:
-    cor = "#EF6C00" if km_restante > 300 else "#C62828"
-    st.markdown(f"""
-        <div class="alerta-manutencao" style="background-color: {cor};">
-            🚨 ATENÇÃO MATEUS: Faltam {km_restante:.0f} KM para sua manutenção!<br>
-            Prepare R$ {custo_previsto:.2f} para a troca de óleo e filtros.
-        </div>
-    """, unsafe_allow_html=True)
-
-tab_ganhos, tab_manutencao, tab_historico = st.tabs(["💰 Ganhos & Metas", "🔧 Inteligência Mecânica", "📋 Histórico"])
-
-with tab_ganhos:
-    col_input, col_stats = st.columns([1, 2])
-    
-    with col_input:
-        st.markdown("<div class='metric-card'><h4>📝 Lançar Dia</h4></div>", unsafe_allow_html=True)
-        with st.form("f_dia", clear_on_submit=True):
-            d_data = st.date_input("Data", date.today())
-            d_ganho = st.number_input("Ganho Total (R$)", step=10.0)
-            d_gasto = st.number_input("Combustível (R$)", step=5.0)
-            d_km = st.number_input("KM Rodados Hoje", step=1.0)
-            if st.form_submit_button("Salvar Dia"):
-                cursor.execute("INSERT INTO ganhos (usuario, data, ganho, gasto, km_rodado, inicio, fim) VALUES (?,?,?,?,?,?,?)",
-                               (user, str(d_data), d_ganho, d_gasto, d_km, "08:00", "17:00"))
+    with st.expander("🔄 Atualizar Carro ou FIPE"):
+        with st.form("reset"):
+            u_f = st.number_input("Valor FIPE do Veículo", value=float(valor_fipe))
+            u_k = st.number_input("KM Atual do Painel", value=float(km_partida + df_ganhos['km_rodado'].sum()))
+            u_t = st.number_input("KM Próxima Troca de Óleo", value=float(km_alvo))
+            u_c = st.number_input("Custo Médio da Troca", value=float(custo_m))
+            if st.form_submit_button("Atualizar Tudo"):
+                cursor.execute("UPDATE veiculo SET km_inicial=?, km_troca_alvo=?, custo_estimado=?, valor_fipe=? WHERE usuario=?", (u_k, u_t, u_c, u_f, user))
+                cursor.execute("DELETE FROM ganhos WHERE usuario=?", (user,))
                 conn.commit()
                 st.rerun()
-
-    with col_stats:
-        if not df_ganhos.empty:
-            df_ganhos['lucro'] = df_ganhos['ganho'] - df_ganhos['gasto']
-            l_total = df_ganhos['lucro'].sum()
-            
-            c1, c2, c3 = st.columns(3)
-            c1.metric("KM Atual do Carro", f"{km_atual_calculado:.0f} km")
-            c2.metric("Lucro Acumulado", f"R$ {l_total:.2f}")
-            c3.metric("Falta p/ Manutenção", f"{km_restante:.0f} km")
-            
-            st.write("### Evolução Diária")
-            st.line_chart(df_ganhos.tail(10).set_index('data')['lucro'])
-        else: st.info("Lance seu primeiro dia para ver as estatísticas!")
-
-with tab_manutencao:
-    st.header("🧠 Assistente de Manutenção Inteligente")
-    if not df_ganhos.empty:
-        # Lógica de Inteligência de Dados
-        media_km_dia = df_ganhos['km_rodado'].mean()
-        media_lucro_dia = df_ganhos['lucro'].mean()
-        
-        # Quantos dias faltam?
-        dias_restantes = km_restante / media_km_dia if media_km_dia > 0 else 0
-        reserva_sugerida = custo_previsto / dias_restantes if dias_restantes > 1 else custo_previsto
-        
-        c_a, c_b = st.columns(2)
-        with c_a:
-            st.subheader("Estimativa de Tempo")
-            st.info(f"Você roda em média **{media_km_dia:.1f} KM/dia**.")
-            st.warning(f"Nesse ritmo, você atingirá o limite da manutenção em **{dias_restantes:.0f} dias**.")
-        
-        with c_b:
-            st.subheader("Planejamento Financeiro")
-            st.success(f"Sugestão: Guarde **R$ {reserva_sugerida:.2f}** por dia.")
-            st.write(f"Isso é apenas {((reserva_sugerida/media_lucro_dia)*100):.1f}% do seu lucro diário médio.")
-            
-        st.progress(max(0, min(1.0, 1 - (km_restante/2000)))) # Barra de progresso baseada nos últimos 2000km
-    else:
-        st.write("Aguardando dados suficientes para calcular médias...")
-
-with tab_historico:
-    st.subheader("Todos os Lançamentos")
-    if not df_ganhos.empty:
-        st.dataframe(df_ganhos[['id', 'data', 'ganho', 'gasto', 'km_rodado', 'lucro']], use_container_width=True)
-        id_del = st.number_input("ID para excluir", min_value=1, step=1)
-        if st.button("🗑️ Excluir"):
-            cursor.execute("DELETE FROM ganhos WHERE id=? AND usuario=?", (id_del, user))
-            conn.commit()
-            st.rerun()
