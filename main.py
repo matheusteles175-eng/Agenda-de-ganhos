@@ -1,213 +1,104 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
-from datetime import date
+import plotly.express as px
 
-# --- 1. CONFIGURAÇÃO E ESTILO ---
-st.set_page_config(page_title="CheckPoint Shift 🏁", layout="wide")
+# Configuração da página para ser leve e funcional
+st.set_page_config(page_title="Cidade da Liberdade", layout="wide")
 
+# --- ESTILIZAÇÃO LEVE ---
 st.markdown("""
-<style>
-    .stApp {
-        background: linear-gradient(rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.8)), 
-                    url("https://images.unsplash.com/photo-1614850523296-d8c1af93d400?q=80&w=2070&auto=format&fit=crop");
-        background-size: cover;
-        background-attachment: fixed;
-    }
-    .stTabs [data-baseweb="tab"] { color: white !important; font-size: 20px !important; font-weight: bold; }
-    [data-testid="stForm"], .st-expander, .stMetric, div[data-testid="stVerticalBlock"] > div {
-        background-color: rgba(255, 255, 255, 0.07) !important;
-        backdrop-filter: blur(15px);
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        border-radius: 15px !important;
-        padding: 20px;
-    }
-    .card-meta {
-        padding: 30px; border-radius: 20px; text-align: center; margin: 20px 0; border: 3px solid;
-    }
-    .meta-sucesso { background-color: rgba(0, 255, 127, 0.2); border-color: #00FF7F; color: #00FF7F; }
-    .meta-falta { background-color: rgba(255, 75, 75, 0.2); border-color: #FF4B4B; color: #FF4B4B; }
-    .stButton>button {
-        width: 100%; border-radius: 10px; font-weight: bold; font-size: 16px !important; height: 3.2em;
-        background-color: rgba(255, 255, 255, 0.1) !important; color: white !important; border: 1px solid rgba(255, 255, 255, 0.4) !important;
-    }
-    .stButton>button:hover { background-color: white !important; color: black !important; }
-    h1, h2, h3, h4, label, p, span { color: white !important; text-shadow: 1px 1px 2px #000; }
-</style>
-""", unsafe_allow_html=True)
+    <style>
+    .main { background-color: #f0f2f6; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 2px 2px 5px rgba(0,0,0,0.1); }
+    </style>
+    """, unsafe_allow_html=True)
 
-def conectar():
-    conn = sqlite3.connect("checkpoint_shift_mateus.db", check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS usuarios (usuario TEXT PRIMARY KEY, senha TEXT)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS veiculo (usuario TEXT PRIMARY KEY, km_ini REAL, km_alvo REAL, custo REAL, fipe REAL, guardado_ipva REAL)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS metas (id INTEGER PRIMARY KEY, usuario TEXT, item TEXT, valor REAL, data TEXT, guardado REAL)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS ganhos (id INTEGER PRIMARY KEY, usuario TEXT, data TEXT, ganho REAL, gasto REAL, km REAL, h_ini TEXT, h_fim TEXT)")
-    conn.commit()
-    return conn, cursor
+# --- SIMULAÇÃO DE BANCO DE DADOS (Pode ser trocado por SQLite depois) ---
+if 'dividas' not in st.session_state:
+    st.session_state.dividas = []
+if 'pontos_cidade' not in st.session_state:
+    st.session_state.pontos_cidade = 0
 
-conn, cursor = conectar()
+# --- TÍTULO ---
+st.title("🏙️ Cidade da Liberdade Financeira")
+st.write("Transforme suas dívidas em construções e recupere seu futuro.")
 
-if "autenticado" not in st.session_state: st.session_state.autenticado = False
+# --- BARRA LATERAL (MENU) ---
+menu = st.sidebar.selectbox("Para onde vamos?", ["Minha Cidade", "Exterminador de Cartão", "Calculadora de Liberdade"])
 
-# --- 2. TELA DE ACESSO (CORRIGIDA) ---
-if not st.session_state.autenticado:
-    st.markdown("<h1 style='text-align: center;'>🏁 CheckPoint Shift</h1>", unsafe_allow_html=True)
-    aba_login, aba_cad = st.tabs(["🔑 ACESSAR", "📝 CRIAR CONTA"])
+# --- FUNÇÃO: MINHA CIDADE (O JOGO) ---
+if menu == "Minha Cidade":
+    st.header("Sua Evolução Visual")
     
-    with aba_login:
-        u = st.text_input("Usuário", key="login_user").lower().strip()
-        s = st.text_input("Senha", type="password", key="login_pass")
-        if st.button("ENTRAR NO PAINEL"):
-            if cursor.execute("SELECT * FROM usuarios WHERE usuario=? AND senha=?", (u, s)).fetchone():
-                st.session_state.autenticado, st.session_state.user = True, u
-                st.rerun()
-            else: st.error("Usuário ou senha incorretos.")
-            
-    with aba_cad:
-        nu = st.text_input("Definir Novo Usuário", key="cad_user").lower().strip()
-        ns = st.text_input("Definir Senha", type="password", key="cad_pass")
-        if st.button("CADASTRAR CONTA"):
-            if nu and ns:
-                try:
-                    cursor.execute("INSERT INTO usuarios (usuario, senha) VALUES (?,?)", (nu, ns))
-                    conn.commit()
-                    st.success("✅ Conta criada com sucesso! Vá para a aba ACESSAR.")
-                except: st.error("❌ Este usuário já existe.")
-            else: st.warning("Preencha todos os campos.")
-    st.stop()
-
-user = st.session_state.user
-hoje = date.today()
-
-# --- 3. VEÍCULO ---
-v_data = cursor.execute("SELECT * FROM veiculo WHERE usuario=?", (user,)).fetchone()
-if "editando_veiculo" not in st.session_state: st.session_state.editando_veiculo = False
-
-if v_data is None or st.session_state.editando_veiculo:
-    st.header("⚙️ Configuração do Veículo")
-    with st.form("cfg_carro"):
-        fipe_val = st.number_input("Valor FIPE do Carro", value=45000.0)
-        km_atual_input = st.number_input("KM Atual do Painel", value=100000.0)
-        prox_troca = st.number_input("KM da Próxima Troca de Óleo", value=km_atual_input + 10000)
-        if st.form_submit_button("SALVAR CONFIGURAÇÃO"):
-            cursor.execute("INSERT OR REPLACE INTO veiculo VALUES (?,?,?,?,?,?)", 
-                           (user, km_atual_input, prox_troca, 350.0, fipe_val, 0.0 if v_data is None else v_data[5]))
-            conn.commit(); st.session_state.editando_veiculo = False; st.rerun()
-    st.stop()
-
-km_atual_bd = v_data[1]
-km_alvo_revisao = v_data[2]
-
-# --- 4. PAINEL PRINCIPAL ---
-st.title(f"🚀 PAINEL: {user.upper()}")
-tab_resumo, tab_ganhos, tab_caixinhas = st.tabs(["📊 RESUMO & MANUTENÇÃO", "💰 GANHOS & METAS", "🎯 CAIXINHAS"])
-
-with tab_resumo:
-    fipe, guardado_ipva = v_data[4], v_data[5]
-    total_ipva = fipe * 0.04
+    # Lógica do Balão/Peso (Sufoco)
+    renda = st.number_input("Qual sua renda mensal real? (Sem contar limite)", value=1000.0)
+    total_divida = sum(d['valor'] for d in st.session_state.dividas)
+    percentual_uso = (total_divida / renda) if renda > 0 else 0
     
-    col1, col2 = st.columns(2)
+    col1, col2 = st.columns([1, 2])
+    
     with col1:
-        st.subheader("💰 Fundo IPVA")
-        st.metric("Falta Guardar", f"R$ {total_ipva - guardado_ipva:.2f}", f"Total IPVA: R$ {total_ipva:.2f}")
-        val_ipva = st.number_input("Valor Operação IPVA (R$):", value=0.0, key="op_ipva")
-        ca, cb = st.columns(2)
-        if ca.button("📥 DEPOSITAR"):
-            cursor.execute("UPDATE veiculo SET guardado_ipva = guardado_ipva + ? WHERE usuario=?", (val_ipva, user))
-            conn.commit(); st.rerun()
-        if cb.button("🗑️ ZERAR IPVA"):
-            cursor.execute("UPDATE veiculo SET guardado_ipva = 0 WHERE usuario=?", (user,))
-            conn.commit(); st.rerun()
-
+        if percentual_uso > 0.9:
+            st.error(f"💥 CUIDADO! Seu balão está explodindo! ({percentual_uso*100:.1f}%)")
+            st.write("🔴 Você está sufocado pelas dívidas.")
+        elif percentual_uso > 0.5:
+            st.warning(f"🎈 O balão está ficando gordo... ({percentual_uso*100:.1f}%)")
+        else:
+            st.success(f"🟢 Balão sob controle! ({percentual_uso*100:.1f}%)")
+            
     with col2:
-        st.subheader("🔧 Revisão (Troca de Óleo)")
-        km_restante = km_alvo_revisao - km_atual_bd
-        progresso_km = max(0.0, min(1.0, (1 - (km_restante / 10000)))) if km_restante > 0 else 1.0
-        
-        st.metric("KM Atual do Carro", f"{km_atual_bd:.1f} km")
-        st.write(f"Próxima troca em: **{km_alvo_revisao:.1f} km**")
-        st.progress(progresso_km)
-        
-        if km_restante <= 500:
-            st.error(f"⚠️ TROCAR ÓLEO URGENTE! Faltam {km_restante:.1f} km")
-        else:
-            st.info(f"Faltam {km_restante:.1f} km para a revisão.")
+        st.subheader("Sua Cidade Construída:")
+        # Desenho simples da cidade usando Emojis (Super leve!)
+        num_casas = int(st.session_state.pontos_cidade / 10)
+        cidade_visual = "🌳" + ("🏠" * num_casas) + "🏙️" if num_casas > 5 else "🌳" + ("🏠" * num_casas)
+        st.title(cidade_visual)
+        st.info(f"Você tem {st.session_state.pontos_cidade} pontos de Liberdade. Cada dívida paga gera 10 pontos!")
 
-with tab_ganhos:
-    meta_diaria = st.number_input("Sua Meta Diária (R$):", value=400.0, key="meta_val")
+# --- FUNÇÃO: EXTERMINADOR DE CARTÃO ---
+elif menu == "Exterminador de Cartão":
+    st.header("🛡️ Plano de Guerra contra o Cartão")
     
-    with st.form("ganho_diario", clear_on_submit=True):
-        st.subheader("Registrar Trabalho")
-        g1, g2, g3 = st.columns(3)
-        v_bruto = g1.number_input("Ganhos Brutos (R$)")
-        v_gastos = g2.number_input("Total Gastos (R$)")
-        v_km_rodada = g3.number_input("KM Rodada Hoje")
+    with st.expander("➕ Registrar Dívida/Parcela"):
+        nome = st.text_input("O que você comprou?")
+        valor = st.number_input("Valor da Parcela (R$)", min_value=0.0)
+        tipo = st.selectbox("Tipo", ["Cartão de Crédito", "Empréstimo", "Conta Fixa"])
         
-        if st.form_submit_button("💾 SALVAR DIA E ATUALIZAR KM"):
-            cursor.execute("INSERT INTO ganhos (usuario, data, ganho, gasto, km, h_ini, h_fim) VALUES (?,?,?,?,?,?,?)", 
-                           (user, str(hoje), v_bruto, v_gastos, v_km_rodada, "00:00", "00:00"))
-            cursor.execute("UPDATE veiculo SET km_ini = km_ini + ? WHERE usuario=?", (v_km_rodada, user))
-            conn.commit(); st.rerun()
+        if st.button("Lançar no Sistema"):
+            st.session_state.dividas.append({"nome": nome, "valor": valor, "tipo": tipo, "paga": False})
+            st.success(f"Registrado: {nome}")
 
-    # --- LÓGICA ACUMULATIVA ---
-    df_h = pd.read_sql_query(f"SELECT * FROM ganhos WHERE usuario='{user}'", conn)
-    if not df_h.empty:
-        lucro_total = df_h['ganho'].sum() - df_h['gasto'].sum()
-        meta_total = len(df_h) * meta_diaria
-        if lucro_total >= meta_total:
-            excedente = lucro_total - meta_total
-            st.markdown(f'<div class="card-meta meta-sucesso"><h1>META ACUMULADA ATINGIDA! 🎯</h1><p style="font-size: 50px; font-weight: bold;">R$ {lucro_total:.2f}</p><p>🚀 Parabéns! Você está com <b>R$ {excedente:.2f}</b> acima da meta total!</p></div>', unsafe_allow_html=True)
-        else:
-            deficit = meta_total - lucro_total
-            st.markdown(f'<div class="card-meta meta-falta"><h1>DÉFICIT ACUMULADO ⚠️</h1><p style="font-size: 50px; font-weight: bold;">R$ {lucro_total:.2f}</p><p>Você está em déficit de <b>R$ {deficit:.2f}</b> em relação à meta total.</p></div>', unsafe_allow_html=True)
+    st.subheader("Lista de Batalha")
+    if st.session_state.dividas:
+        df = pd.DataFrame(st.session_state.dividas)
+        st.table(df)
+        
+        if st.button("Marcar última como PAGA ✅"):
+            if st.session_state.dividas:
+                st.session_state.dividas.pop() # Remove a dívida
+                st.session_state.pontos_cidade += 10 # Ganha pontos no jogo
+                st.balloons()
+                st.rerun()
+    else:
+        st.write("Nenhuma dívida pendente! Sua cidade está em paz. 🕊️")
 
-    st.subheader("📜 Histórico")
-    df_show = df_h.sort_values(by='id', ascending=False)
-    for i, r in df_show.iterrows():
-        with st.container():
-            c_txt, c_del = st.columns([5, 1])
-            l_item = r['ganho'] - r['gasto']
-            cor = "#00FF7F" if l_item >= meta_diaria else "#FF4B4B"
-            c_txt.markdown(f"📅 {r['data']} | Lucro: <b style='color:{cor}'>R$ {l_item:.2f}</b> | Rodou: {r['km']} km", unsafe_allow_html=True)
-            if c_del.button("🗑️", key=f"del_g_{r['id']}"):
-                cursor.execute("UPDATE veiculo SET km_ini = km_ini - ? WHERE usuario=?", (r['km'], user))
-                cursor.execute("DELETE FROM ganhos WHERE id=?", (r['id'],))
-                conn.commit(); st.rerun()
-
-with tab_caixinhas:
-    st.subheader("🎯 Suas Caixinhas")
-    with st.expander("➕ NOVA META"):
-        with st.form("meta_form"):
-            it = st.text_input("Objetivo"); v = st.number_input("Valor Total")
-            if st.form_submit_button("CRIAR"):
-                cursor.execute("INSERT INTO metas (usuario, item, valor, data, guardado) VALUES (?,?,?,?,?)", (user, it, v, str(hoje), 0.0))
-                conn.commit(); st.rerun()
+# --- FUNÇÃO: CALCULADORA DE LIBERDADE ---
+elif menu == "Calculadora de Liberdade":
+    st.header("⏱️ O Preço Real da Compra")
+    st.write("Descubra quantos dias da sua vida você entrega para o banco.")
     
-    m_db = pd.read_sql_query(f"SELECT * FROM metas WHERE usuario='{user}'", conn)
-    for i, m in m_db.iterrows():
-        with st.container():
-            st.write(f"### 🚀 {m['item']}")
-            st.progress(min((m['guardado'] or 0)/m['valor'], 1.0) if m['valor'] > 0 else 0)
-            v_m = st.number_input("Valor p/ Operação:", key=f"v_{m['id']}", value=0.0)
-            c1, c2, c3 = st.columns(3)
-            if c1.button("📥 Guardar", key=f"in_{m['id']}"):
-                cursor.execute("UPDATE metas SET guardado = guardado + ? WHERE id=?", (v_m, m['id'])); conn.commit(); st.rerun()
-            if c2.button("📤 Retirar", key=f"out_{m['id']}"):
-                cursor.execute("UPDATE metas SET guardado = guardado - ? WHERE id=?", (v_m, m['id'])); conn.commit(); st.rerun()
-            if c3.button("🗑️ Excluir", key=f"del_m_{m['id']}"):
-                cursor.execute("DELETE FROM metas WHERE id=?", (m['id'],)); conn.commit(); st.rerun()
+    valor_compra = st.number_input("Valor do produto no cartão (R$)", value=100.0)
+    ganho_dia = st.number_input("Quanto você ganha limpo por dia? (R$)", value=50.0)
+    
+    dias = valor_compra / ganho_dia
+    
+    st.metric("Dias de Vida Entregues", f"{dias:.1f} Dias")
+    
+    if dias > 3:
+        st.warning(f"Você vai trabalhar {dias:.1f} dias apenas para pagar isso. Vale sua energia?")
+    else:
+        st.success("Essa compra parece caber no seu esforço diário.")
 
-# --- SIDEBAR ---
-st.sidebar.title("⚙️ OPÇÕES")
-if st.sidebar.button("🚗 RECONFIGURAR CARRO/KM"):
-    st.session_state.editando_veiculo = True; st.rerun()
-if st.sidebar.button("🚪 SAIR DO APP"):
-    st.session_state.autenticado = False; st.rerun()
-st.sidebar.markdown("---")
-st.sidebar.subheader("ZONA DE PERIGO")
-if st.sidebar.button("⚠️ ZERAR TODOS OS MEUS DADOS"):
-    cursor.execute("DELETE FROM ganhos WHERE usuario=?", (user,))
-    cursor.execute("DELETE FROM metas WHERE usuario=?", (user,))
-    cursor.execute("DELETE FROM veiculo WHERE usuario=?", (user,))
-    conn.commit(); st.rerun()
+    st.markdown("---")
+    st.markdown("### 💡 Dica do Mestre:")
+    st.info("Sempre que pensar em parcelar, lembre-se: O banco está comprando o seu tempo de trabalho do futuro.")
+
